@@ -1,0 +1,53 @@
+{
+  "name": "method-types-ts-generator-alvamind",
+  "version": "1.0.0",
+  "description": "A TypeScript method type generator",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alvamind/method-types-ts-generator-alvamind.git"
+  },
+  "bin": {
+    "method-types-ts-generator-alvamind": "./dist/scripts/generate-type-cli.js"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts --watch",
+    "build": "tsc && tsc -p tsconfig.build.json",
+    "clean": "rimraf dist",
+    "prebuild": "npm run clean"
+  },
+  "keywords": [
+    "typescript",
+    "types",
+    "generator",
+    "cli"
+  ],
+  "author": "Alvamind",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "src",
+    "scripts",
+    "README.md",
+    "index.d.ts"
+  ],
+  "dependencies": {
+    "pino": "^8.21.0",
+    "typescript": "^5.7.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.11",
+    "bun-types": "^1.1.42",
+    "rimraf": "^5.0.10"
+  }
+}
