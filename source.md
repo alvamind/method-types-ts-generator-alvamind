@@ -1,8 +1,8 @@
 # Project: method-types-ts-generator-alvamind
 
-dist
 scripts
 src
+test
 ====================
 // .npmignore
 # Logs
@@ -58,8 +58,10 @@ dist
     "source": "generate-source output=source.md exclude=dist/,README.md,nats-rpc.test.ts,rpc-nats-alvamind-1.0.0.tgz,.gitignore",
     "dev": "bun run src/index.ts --watch",
     "build": "tsc && tsc -p tsconfig.build.json",
-    "clean": "rimraf dist",
-    "prebuild": "npm run clean"
+    "clean": "rimraf dist && clean",
+    "commit": "commit",
+    "split-code": "split-code source=combined.ts markers=src/,lib/ outputDir=./output",
+    "publish-npm": "publish-npm patch"
   },
   "keywords": [
     "typescript",
@@ -83,6 +85,7 @@ dist
     "typescript": "^5.7.2"
   },
   "devDependencies": {
+    "@types/bun": "^1.1.14",
     "@types/node": "^20.17.11",
     "bun-types": "^1.1.42",
     "rimraf": "^5.0.10"
@@ -208,30 +211,68 @@ async function getAllTsFiles(dir: string, excludePatterns: RegExp[]): Promise<st
   }
   return files;
 }
-async function scanClasses(scanPath: string, tsFiles: string[]): Promise<ClassInfo[]> {
-  console.log(chalk.cyan(`[NATS] Scanning classes in ${scanPath}`));
-  const project = new Project();
-  project.addSourceFilesAtPaths(tsFiles);
-  const classInfos: ClassInfo[] = [];
-  for (const sourceFile of project.getSourceFiles()) {
-    sourceFile.getClasses().forEach(classDeclaration => {
-      const className = classDeclaration.getName();
-      if (!className) return
-      const methods: MethodInfo[] = [];
-      classDeclaration.getMethods().forEach(methodDeclaration => {
-        const methodName = methodDeclaration.getName();
-        console.log(chalk.cyan(`[NATS] Found method: ${chalk.bold(methodName)} in class ${chalk.bold(className)}`));
-        methods.push({ methodName });
-      });
-      if (methods.length > 0) {
-        classInfos.push({ className, methods });
+async function scanProject(projectDir: string): Promise<Map<string, string>> {
+  const fileMap = new Map<string, string>();
+  async function scanDirectory(dir: string) {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await scanDirectory(fullPath);
+      } else if (entry.isFile() && entry.name.endsWith('.ts')) {
+        const fileName = path.basename(entry.name, '.ts');
+        fileMap.set(fileName, fullPath);
       }
-    });
+    }
   }
-  console.log(chalk.yellow(`[NATS] Found ${classInfos.length} classes with methods`));
-  return classInfos;
+  await scanDirectory(projectDir);
+  return fileMap;
 }
-async function extractTypeInformation(scanPath: string, tsFiles: string[], outputPath: string): Promise<TypeInformation> {
+function resolveImportPath(outputPath: string, filePath: string, fileMap: Map<string, string>): string {
+  const fileName = path.basename(filePath, '.ts');
+  const sourceFilePath = fileMap.get(fileName);
+  if (!sourceFilePath) {
+    throw new Error(`File ${fileName} not found in project.`);
+  }
+  const relativePath = path.relative(path.dirname(outputPath), path.dirname(sourceFilePath));
+  const importPath = path.join(relativePath, fileName).replace(/\\/g, '/');
+  return importPath.startsWith('..') ? importPath : `./${importPath}`;
+}
+async function collectImports(
+  declaration: any,
+  imports: Set<string>,
+  project: Project,
+  outputPath: string,
+  scanPath: string,
+  fileMap: Map<string, string>
+) {
+  if (!declaration) return;
+  const symbol = declaration.getSymbol();
+  if (!symbol) return;
+  const typeName = symbol.getName();
+  if (["T", "K", "U", "V"].includes(typeName) || ["Promise"].includes(typeName)) {
+    return;
+  }
+  const declarations = symbol.getDeclarations();
+  if (!declarations || declarations.length === 0) return;
+  const sourceFile = declarations[0].getSourceFile();
+  if (!sourceFile) return;
+  if (sourceFile.getFilePath().includes("node_modules/typescript/lib")) {
+    return;
+  }
+  const modulePath = sourceFile.getFilePath();
+  const fileName = path.basename(modulePath, '.ts');
+  const importPath = resolveImportPath(outputPath, modulePath, fileMap);
+  if (!Array.from(imports).some(imp => imp.includes(`{ ${typeName} }`))) {
+    imports.add(`import { ${typeName} } from '${importPath}';`);
+  }
+}
+async function extractTypeInformation(
+  scanPath: string,
+  tsFiles: string[],
+  outputPath: string,
+  fileMap: Map<string, string>
+): Promise<TypeInformation> {
   console.log(chalk.cyan(`[NATS] Extracting type information...`));
   const project = new Project();
   project.addSourceFilesAtPaths(tsFiles);
@@ -243,7 +284,7 @@ async function extractTypeInformation(scanPath: string, tsFiles: string[], outpu
   };
   for (const sourceFile of project.getSourceFiles()) {
     sourceFile.getClasses().forEach(classDeclaration => {
-      const className = classDeclaration.getName()
+      const className = classDeclaration.getName();
       if (!className) return;
       const methodParams = new Map<string, { type: string; name: string; optional: boolean }[]>();
       const methodReturns = new Map<string, string>();
@@ -252,24 +293,25 @@ async function extractTypeInformation(scanPath: string, tsFiles: string[], outpu
         const params: { type: string; name: string; optional: boolean }[] = [];
         methodDeclaration.getParameters().forEach(parameter => {
           const paramType = parameter.getType();
+          const typeText = paramType.getText(parameter); // Correct usage of getText
           params.push({
-            type: paramType.getText(),
+            type: typeText,
             name: parameter.getName(),
             optional: parameter.isOptional()
           });
-          collectImports(parameter.getType().getSymbol()?.getDeclarations()?.[0], typeInfo.imports, project, outputPath, scanPath, tsFiles);
-        })
+          collectImports(parameter.getType().getSymbol()?.getDeclarations()?.[0], typeInfo.imports, project, outputPath, scanPath, fileMap);
+        });
         methodParams.set(methodName, params);
         const returnType = methodDeclaration.getReturnType();
-        methodReturns.set(methodName, returnType.getText());
+        const returnTypeText = returnType.getText(methodDeclaration); // Correct usage of getText
+        methodReturns.set(methodName, returnTypeText);
         const returnTypeSymbol = returnType.getSymbol();
         if (returnTypeSymbol && returnTypeSymbol.getName() === "Promise") {
           returnType.getTypeArguments().forEach(typeArg => {
-            collectImports(typeArg.getSymbol()?.getDeclarations()?.[0], typeInfo.imports, project, outputPath, scanPath, tsFiles);
-          })
-        }
-        else {
-          collectImports(returnTypeSymbol?.getDeclarations()?.[0], typeInfo.imports, project, outputPath, scanPath, tsFiles);
+            collectImports(typeArg.getSymbol()?.getDeclarations()?.[0], typeInfo.imports, project, outputPath, scanPath, fileMap);
+          });
+        } else {
+          collectImports(returnTypeSymbol?.getDeclarations()?.[0], typeInfo.imports, project, outputPath, scanPath, fileMap);
         }
       });
       typeInfo.methodParams.set(className, methodParams);
@@ -279,66 +321,79 @@ async function extractTypeInformation(scanPath: string, tsFiles: string[], outpu
   console.log(chalk.cyan(`[NATS] Finished extracting type information`));
   return typeInfo;
 }
-function collectImports(declaration: any, imports: Set<string>, project: Project, outputPath: string, scanPath: string, tsFiles: string[]) {
-  if (!declaration) {
-    return;
+async function scanClasses(scanPath: string, tsFiles: string[]): Promise<ClassInfo[]> {
+  console.log(chalk.cyan(`[NATS] Scanning classes in ${scanPath}`));
+  const project = new Project();
+  project.addSourceFilesAtPaths(tsFiles);
+  const classInfos: ClassInfo[] = [];
+  for (const sourceFile of project.getSourceFiles()) {
+    sourceFile.getClasses().forEach(classDeclaration => {
+      const className = classDeclaration.getName();
+      if (!className) return;
+      const methods: MethodInfo[] = [];
+      classDeclaration.getMethods().forEach(methodDeclaration => {
+        const methodName = methodDeclaration.getName();
+        console.log(chalk.cyan(`[NATS] Found method: ${chalk.bold(methodName)} in class ${chalk.bold(className)}`));
+        methods.push({ methodName });
+      });
+      classInfos.push({ className, methods });
+    });
   }
-  const symbol = declaration.getSymbol();
-  if (symbol) {
-    const typeName = symbol.getName();
-    const declarations = symbol.getDeclarations()
-    if (declarations && declarations.length > 0) {
-      const sourceFile = declarations[0].getSourceFile();
-      if (sourceFile) {
-        if (sourceFile.getFilePath().includes("node_modules/typescript/lib") ||
-          ["Promise", "Partial", "Omit", "Pick", "Record", "Exclude", "Extract"].includes(typeName)
-        ) {
-          return;
-        }
-        const modulePath = sourceFile.getFilePath();
-        const relativePath = path.relative(path.dirname(outputPath), modulePath).replace(/\.ts$/, "");
-        if (!Array.from(imports).some(imp => imp.includes(`{ ${typeName} }`))) {
-          imports.add(`import { ${typeName} } from '${relativePath}';`);
-        }
-      }
-    }
-  }
-  if (declaration.getType && declaration.getType().getTypeArguments) {
-    declaration.getType().getTypeArguments().forEach((typeArg: Type) => {
-      collectImports(typeArg.getSymbol()?.getDeclarations()?.[0], imports, project, outputPath, scanPath, tsFiles)
-    })
-  }
+  console.log(chalk.yellow(`[NATS] Found ${classInfos.length} classes with methods`));
+  return classInfos;
 }
-function generateInterfaceString(classInfos: ClassInfo[], typeInfo: TypeInformation, returnType: string): string {
+function generateInterfaceString(classInfos: ClassInfo[], typeInfo: TypeInformation, returnType: string, project: Project): string {
   let output = "// Auto-generated by rpc-nats-alvamind\n\n";
   if (typeInfo.imports.size > 0) {
     output += Array.from(typeInfo.imports).join("\n") + "\n\n";
   }
   output += "export interface ExposedMethods {\n";
+  const uniqueClasses = new Map<string, Set<MethodInfo>>();
   for (const classInfo of classInfos) {
-    output += `  ${classInfo.className}: {\n`;
-    const methodParams = typeInfo.methodParams.get(classInfo.className);
-    const methodReturns = typeInfo.methodReturns.get(classInfo.className);
-    for (const method of classInfo.methods) {
+    if (!uniqueClasses.has(classInfo.className)) {
+      uniqueClasses.set(classInfo.className, new Set());
+    }
+    const methods = uniqueClasses.get(classInfo.className)!;
+    classInfo.methods.forEach(method => {
+      methods.add(method);
+    });
+  }
+  uniqueClasses.forEach((methods, className) => {
+    output += `  ${className}: {\n`;
+    const methodParams = typeInfo.methodParams.get(className);
+    const methodReturns = typeInfo.methodReturns.get(className);
+    methods.forEach(method => {
       const params = methodParams?.get(method.methodName) || [];
-      const returnTypeString = methodReturns?.get(method.methodName) || "any";
-      const paramString = params.map((p) => `${p.name}${p.optional ? "?" : ""}: ${p.type}`).join(", ");
-      let returnTypeOutput: string
+      let returnTypeString = methodReturns?.get(method.methodName) || "any";
+      returnTypeString = returnTypeString.replace(/import\([^)]+\)\./g, '');
+      const genericParams = method.methodName.match(/<[^>]+>/);
+      const genericParamsString = genericParams ? genericParams[0] : '';
+      const paramString = params
+        .map(p => `${p.name}${p.optional ? "?" : ""}: ${p.type.replace(/import\([^)]+\)\./g, '')}`)
+        .join(", ");
+      const isPromiseType = returnTypeString.startsWith('Promise<');
+      if (isPromiseType && returnType === 'raw') {
+        returnTypeString = returnTypeString.replace(/Promise<(.+)>/, '$1');
+      }
+      let returnTypeOutput: string;
       switch (returnType) {
         case 'promise':
-          returnTypeOutput = `Promise<${returnTypeString}>`
+          returnTypeOutput = isPromiseType ?
+            returnTypeString :
+            `Promise<${returnTypeString}>`;
           break;
         case 'observable':
-          returnTypeOutput = `Observable<${returnTypeString}>`
-          break
-        default:
-          returnTypeOutput = returnTypeString
+          returnTypeOutput = `Observable<${isPromiseType ?
+            returnTypeString.replace(/Promise<(.+)>/, '$1') :
+            returnTypeString}>`;
           break;
+        default: // 'raw'
+          returnTypeOutput = returnTypeString;
       }
-      output += `    ${method.methodName}(${paramString}): ${returnTypeOutput};\n`;
-    }
+      output += `    ${method.methodName}${genericParamsString}(${paramString}): ${returnTypeOutput};\n`;
+    });
     output += "  };\n";
-  }
+  });
   output += "}\n";
   return output;
 }
@@ -350,20 +405,305 @@ export async function generateExposedMethodsType(
     const excludePatterns = createRegexPatterns(options.excludeFiles);
     const tsFiles = await getAllTsFiles(options.scanPath, excludePatterns);
     console.log(chalk.yellow(`[NATS] Found ${tsFiles.length} TypeScript files to process`));
-    const typeInfo = await extractTypeInformation(options.scanPath, tsFiles, outputPath);
+    const project = new Project();
+    project.addSourceFilesAtPaths(tsFiles);
+    const fileMap = await scanProject(options.scanPath);
+    const typeInfo = await extractTypeInformation(options.scanPath, tsFiles, outputPath, fileMap);
     const classInfos = await scanClasses(options.scanPath, tsFiles);
-    const interfaceString = generateInterfaceString(classInfos, typeInfo, options.returnType || 'raw');
+    const interfaceString = generateInterfaceString(classInfos, typeInfo, options.returnType || 'raw', project);
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
     await fs.writeFile(outputPath, interfaceString, "utf-8");
   } catch (error) {
     console.error(chalk.red.bold('[NATS] Error generating exposed methods types:'));
     console.error(chalk.red(error));
-    throw error
+    throw error;
   }
 }
 
 // src/index.ts
-export { generateExposedMethodsType, generateTypeCli } from './generate-exposed-types';
+export { generateExposedMethodsType } from './generate-exposed-types';
+
+// test/main.test.ts
+import { describe, test, beforeAll, afterAll, expect, beforeEach, afterEach } from 'bun:test';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import { generateExposedMethodsType } from '../src/generate-exposed-types';
+const testDir = path.join(__dirname, 'test-files');
+const outputDir = path.join(__dirname, 'output');
+beforeAll(async () => {
+  await fs.mkdir(testDir, { recursive: true });
+  await fs.mkdir(outputDir, { recursive: true });
+});
+afterAll(async () => {
+  await fs.rm(testDir, { recursive: true, force: true });
+  await fs.rm(outputDir, { recursive: true, force: true });
+});
+describe('Type Generator Test Suite', () => {
+  beforeEach(async () => {
+    await fs.writeFile(path.join(testDir, 'temp.ts'), '', 'utf-8');
+  });
+  afterEach(async () => {
+    await fs.rm(path.join(testDir, 'temp.ts'));
+  })
+  test('Test Case 1: Basic class with no methods', async () => {
+    const input = `
+            export class MyClass {}
+        `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test1.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toContain('export interface ExposedMethods');
+    expect(output).toContain('MyClass: {');
+  });
+  test('Test Case 2: Class with single method', async () => {
+    const input = `
+            export class MyClass {
+                myMethod(input: string): string { return input}
+            }
+        `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test2.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toMatch(/myMethod\s*\(\s*input:\s*string\s*\):\s*string/);
+  });
+  test('Test Case 3: Class with method and primitive return type', async () => {
+    const input = `
+            export class MyClass {
+                myMethod(): number { return 1}
+            }
+        `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test3.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toMatch(/myMethod\s*\(\s*\):\s*number/);
+  });
+  test('Test Case 4: Method with Promise return type', async () => {
+    const input = `
+          export interface MyData<T> {
+             data: T;
+          }
+            export class MyClass {
+                async myMethod(input: string): Promise<MyData<string>> { return Promise.resolve({data: input});}
+            }
+        `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test4.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toContain(`import { MyData } from '../test-files/temp'`);
+    expect(output).toMatch(/myMethod\s*\(\s*input:\s*string\s*\).*MyData\s*<\s*string\s*>/);
+  });
+  test('Test Case 5: Method with generics parameter', async () => {
+    const input = `
+        export interface MyData<T> {
+           data: T;
+        }
+           export class MyClass {
+                myMethod<T>(input: T): MyData<T> { return {data: input}}
+            }
+        `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test5.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toContain(`import { MyData } from '../test-files/temp'`);
+    expect(output).toMatch(/myMethod.*\(\s*input:\s*T\s*\).*MyData\s*<\s*T\s*>/);
+  });
+  test('Test Case 6: Method with optional parameters', async () => {
+    const input = `
+           export class MyClass {
+               myMethod(input?: string): void {}
+           }
+       `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test6.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toMatch(/myMethod\s*\(\s*input\?\s*:\s*string\s*\):\s*void/);
+  });
+  test('Test Case 7: Method with interface parameter', async () => {
+    const input = `
+                export interface User {
+                    name: string;
+                    email: string
+                }
+                export class MyClass {
+                    myMethod(user: User): User { return user}
+                }
+            `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test7.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toContain(`import { User } from '../test-files/temp'`);
+    expect(output).toMatch(/myMethod\s*\(\s*user:\s*.*User\s*\):\s*.*User/);
+  });
+  test('Test Case 8: Method with Promise return type and promise return type option', async () => {
+    const input = `
+            export interface MyData<T> {
+               data: T;
+            }
+              export class MyClass {
+                   async myMethod(input: string): Promise<MyData<string>> { return Promise.resolve({data: input}) }
+              }
+          `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test8.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir, returnType: 'promise' }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toContain(`import { MyData } from '../test-files/temp'`);
+    expect(output).toMatch(/myMethod\s*\(\s*input:\s*string\s*\):\s*Promise\s*<.*MyData\s*<\s*string\s*>.*>/);
+  });
+  test('Test Case 9: Method with Promise return type and raw return type option', async () => {
+    const input = `
+        export interface MyData<T> {
+           data: T;
+        }
+          export class MyClass {
+               async myMethod(input: string): Promise<MyData<string>> { return Promise.resolve({data: input}) }
+           }
+        `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test9.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir, returnType: 'raw' }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toContain(`import { MyData } from '../test-files/temp'`);
+    expect(output).toMatch(/myMethod\s*\(\s*input:\s*string\s*\).*MyData\s*<\s*string\s*>/);
+  });
+  test('Test Case 10: Class with method that has multi generics parameter and return type', async () => {
+    const input = `
+           export interface MyData<T> {
+                data: T,
+           }
+           export class MyClass {
+                myMethod<T, K>(input: T, option: K): Promise<MyData<{input: T, option: K}>> {
+                    return Promise.resolve({data: {input, option}})
+                }
+           }
+       `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test10.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toContain(`import { MyData } from '../test-files/temp'`);
+    expect(output).toMatch(/myMethod.*\(\s*input:\s*T,\s*option:\s*K\s*\).*MyData\s*<.*input:\s*T.*option:\s*K.*>/);
+  });
+  test('Test Case 11: Class with method that has multi generics parameter and raw return type', async () => {
+    const input = `
+           export interface MyData<T> {
+                data: T,
+           }
+           export class MyClass {
+                myMethod<T, K>(input: T, option: K): Promise<MyData<{input: T, option: K}>> {
+                    return Promise.resolve({data: {input, option}})
+                }
+           }
+       `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test11.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir, returnType: 'raw' }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toContain(`import { MyData } from '../test-files/temp'`);
+    expect(output).toMatch(/myMethod.*\(\s*input:\s*T,\s*option:\s*K\s*\).*MyData\s*<.*input:\s*T.*option:\s*K.*>/);
+  });
+  test('Test Case 12: Multiple classes in different files with shared interfaces', async () => {
+    const userService = `
+      export interface User {
+        id: number;
+        name: string;
+        email: string;
+      }
+      export class UserService {
+        async getUser(id: number): Promise<User> {
+          return { id, name: 'John', email: 'john@example.com' };
+        }
+        getUsers(): User[] {
+          return [{ id: 1, name: 'John', email: 'john@example.com' }];
+        }
+      }
+    `;
+    const authService = `
+      import { User } from './user.service';
+      export class AuthService {
+        login(username: string, password: string): Promise<string> {
+          return Promise.resolve("token");
+        }
+        getLoggedInUser(): Promise<User> {
+          return Promise.resolve({ id: 1, name: 'John', email: 'john@example.com' });
+        }
+      }
+    `;
+    await fs.writeFile(path.join(testDir, 'user.service.ts'), userService, 'utf-8');
+    await fs.writeFile(path.join(testDir, 'auth.service.ts'), authService, 'utf-8');
+    const outputFile = path.join(outputDir, 'test12.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toContain(`import { User } from '../test-files/user.service'`);
+    expect(output).toMatch(/UserService:\s*{[^}]*getUser\s*\(\s*id:\s*number\s*\):\s*User/);
+    expect(output).toMatch(/getUsers\s*\(\s*\):\s*User\[\]/);
+    expect(output).toMatch(/AuthService:\s*{[^}]*login\s*\(\s*username:\s*string,\s*password:\s*string\s*\):\s*string/);
+    expect(output).toMatch(/getLoggedInUser\s*\(\s*\):\s*User/);
+  });
+  test('Test Case 13: Complex service with different return type options', async () => {
+    const input = `
+      export interface MyData<T> {
+        data: T;
+        error?: string;
+      }
+      export class AiService {
+        async process(input: string): Promise<MyData<string>> {
+          return { data: input };
+        }
+        processWithOption<T>(input: T): Promise<MyData<T>> {
+          return Promise.resolve({ data: input });
+        }
+        processWithMultiOption<T, K>(input: T, option: K): Promise<MyData<{input: T, option: K}>> {
+          return Promise.resolve({ data: { input, option } });
+        }
+      }
+    `;
+    await fs.writeFile(path.join(testDir, 'ai.service.ts'), input, 'utf-8');
+    const outputFileRaw = path.join(outputDir, 'test13-raw.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir, returnType: 'raw' }, outputFileRaw);
+    const outputRaw = await fs.readFile(outputFileRaw, 'utf-8');
+    expect(outputRaw).toMatch(/process\s*\(\s*input:\s*string\s*\):\s*MyData\s*<\s*string\s*>/);
+    expect(outputRaw).toMatch(/processWithOption\s*\(\s*input:\s*T\s*\):\s*MyData\s*<\s*T\s*>/);
+    const outputFilePromise = path.join(outputDir, 'test13-promise.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir, returnType: 'promise' }, outputFilePromise);
+    const outputPromise = await fs.readFile(outputFilePromise, 'utf-8');
+    expect(outputPromise).toMatch(/process.*:\s*Promise\s*<\s*MyData\s*<\s*string\s*>\s*>/);
+    const outputFileObservable = path.join(outputDir, 'test13-observable.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir, returnType: 'observable' }, outputFileObservable);
+    const outputObservable = await fs.readFile(outputFileObservable, 'utf-8');
+    expect(outputObservable).toMatch(/process.*:\s*Observable\s*<\s*MyData\s*<\s*string\s*>\s*>/);
+  });
+  test('Test Case 14: Handling of Partial and other utility types', async () => {
+    const input = `
+      export interface User {
+        id: number;
+        name: string;
+        email: string;
+      }
+      export class UserService {
+        async updateUser(id: number, partialUser: Partial<User>): Promise<User> {
+          return Promise.resolve({ id: 1, name: 'John', email: 'john@example.com' });
+        }
+        getFilteredUsers(filter: Pick<User, 'name' | 'email'>): User[] {
+          return [{ id: 1, name: 'John', email: 'john@example.com' }];
+        }
+      }
+    `;
+    await fs.writeFile(path.join(testDir, 'user-update.service.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test14.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toMatch(/updateUser\s*\(\s*id:\s*number,\s*partialUser:\s*Partial\s*<\s*User\s*>\)/);
+    expect(output).toMatch(/getFilteredUsers\s*\(\s*filter:\s*Pick\s*<\s*User,\s*['"]name['"]\s*\|\s*['"]email['"]\s*>\)/);
+  });
+});
 
 // tsconfig.build.json
 {
