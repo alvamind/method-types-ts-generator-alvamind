@@ -24,10 +24,10 @@
     "source": "generate-source output=source.md exclude=dist/,README.md,nats-rpc.test.ts,rpc-nats-alvamind-1.0.0.tgz,.gitignore",
     "dev": "bun run src/index.ts --watch",
     "build": "tsc && tsc -p tsconfig.build.json",
-    "clean": "rimraf dist && clean",
     "commit": "commit",
     "split-code": "split-code source=combined.ts markers=src/,lib/ outputDir=./output",
-    "publish-npm": "publish-npm patch"
+    "publish-npm": "publish-npm patch",
+    "clean": "clean"
   },
   "keywords": [
     "typescript",
@@ -45,7 +45,7 @@
     "index.d.ts"
   ],
   "dependencies": {
-    "alvamind-tools": "^1.0.16",
+    "alvamind-tools": "^1.0.17",
     "chalk": "4.1.2",
     "ts-morph": "^25.0.0",
     "typescript": "^5.7.2"
