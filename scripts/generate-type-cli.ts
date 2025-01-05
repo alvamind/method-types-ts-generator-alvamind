@@ -11,6 +11,7 @@ interface CliOptions {
   outputFile: string;
   returnType?: 'promise' | 'observable' | 'raw';
   logLevel?: 'silent' | 'info' | 'debug';
+  resolver?: 'ts-morph' | 'regex';
 }
 
 function parseArgs(): CliOptions {
@@ -40,6 +41,11 @@ function parseArgs(): CliOptions {
             options.logLevel = value as CliOptions['logLevel'];
           }
           break;
+        case 'resolver':
+          if (['ts-morph', 'regex'].includes(value)) {
+            options.resolver = value as CliOptions['resolver'];
+          }
+          break;
       }
     }
   }
@@ -58,6 +64,10 @@ function parseArgs(): CliOptions {
     options.returnType = 'raw';
   }
 
+  if (!options.resolver) {
+    options.resolver = 'regex';
+  }
+
   if (!options.logLevel) {
     options.logLevel = 'silent';
   }
@@ -74,6 +84,7 @@ async function main() {
     if (options.logLevel === 'info' || options.logLevel === 'debug') console.log(chalk.gray(`Target Directory: ${options.targetDir}`));
     if (options.logLevel === 'info' || options.logLevel === 'debug') console.log(chalk.gray(`Exclude Patterns: ${options.excludeFiles?.join(', ') || 'none'}`));
     if (options.logLevel === 'info' || options.logLevel === 'debug') console.log(chalk.gray(`Output File: ${options.outputFile}`));
+    if (options.logLevel === 'info' || options.logLevel === 'debug') console.log(chalk.gray(`Resolver: ${options.resolver}`));
     if (options.logLevel === 'info' || options.logLevel === 'debug') console.log(chalk.gray(`Return Type: ${options.returnType}\n`));
 
 
@@ -82,7 +93,8 @@ async function main() {
         scanPath: options.targetDir,
         excludeFiles: options.excludeFiles,
         returnType: options.returnType,
-        logLevel: options.logLevel
+        logLevel: options.logLevel,
+        resolver: options.resolver
       },
       options.outputFile,
     );
