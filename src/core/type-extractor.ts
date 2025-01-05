@@ -43,48 +43,48 @@ async function collectImports(
   }
 }
 
-function resolveTypeText(type: Type, node: any): string {
+function resolveTypeText(type: Type, node: any, logLevel?: 'silent' | 'info' | 'debug'): string {
   const typeText = type.getText();
-  console.log(chalk.yellow(`[DEBUG] Resolving type: ${typeText}`));
+  if (logLevel === 'debug') console.log(chalk.yellow(`[DEBUG] Resolving type: ${typeText}`));
 
   // Handle utility types like Partial and Pick
   if (typeText.startsWith('Partial<') || typeText.startsWith('Pick<')) {
-    console.log(chalk.blue(`[DEBUG] Detected utility type: ${typeText}`));
+    if (logLevel === 'debug') console.log(chalk.blue(`[DEBUG] Detected utility type: ${typeText}`));
     const typeArguments = type.getTypeArguments();
-    console.log(chalk.blue(`[DEBUG] Type arguments: ${typeArguments.length}`));
+    if (logLevel === 'debug') console.log(chalk.blue(`[DEBUG] Type arguments: ${typeArguments.length}`));
 
     if (typeArguments.length > 0) {
       const typeArgTexts = typeArguments.map(arg => {
         const argText = arg.getText(node, TypeFormatFlags.NoTruncation);
-        console.log(chalk.blue(`[DEBUG] Type argument: ${argText}`));
+        if (logLevel === 'debug') console.log(chalk.blue(`[DEBUG] Type argument: ${argText}`));
         return argText;
       });
       const resolvedTypeText = typeText.replace(/<.*>/, `<${typeArgTexts.join(', ')}>`);
-      console.log(chalk.green(`[DEBUG] Resolved utility type: ${resolvedTypeText}`));
+      if (logLevel === 'debug') console.log(chalk.green(`[DEBUG] Resolved utility type: ${resolvedTypeText}`));
       return resolvedTypeText;
     }
   }
 
   // Handle Promise types
   if (typeText.startsWith('Promise<')) {
-    console.log(chalk.blue(`[DEBUG] Detected Promise type: ${typeText}`));
+    if (logLevel === 'debug') console.log(chalk.blue(`[DEBUG] Detected Promise type: ${typeText}`));
     const typeArguments = type.getTypeArguments();
-    console.log(chalk.blue(`[DEBUG] Promise type arguments: ${typeArguments.length}`));
+    if (logLevel === 'debug') console.log(chalk.blue(`[DEBUG] Promise type arguments: ${typeArguments.length}`));
 
     if (typeArguments.length > 0) {
       const typeArgTexts = typeArguments.map(arg => {
         const argText = arg.getText(node, TypeFormatFlags.NoTruncation);
-        console.log(chalk.blue(`[DEBUG] Promise type argument: ${argText}`));
+        if (logLevel === 'debug') console.log(chalk.blue(`[DEBUG] Promise type argument: ${argText}`));
         return argText;
       });
       const resolvedTypeText = `Promise<${typeArgTexts.join(', ')}>`;
-      console.log(chalk.green(`[DEBUG] Resolved Promise type: ${resolvedTypeText}`));
+      if (logLevel === 'debug') console.log(chalk.green(`[DEBUG] Resolved Promise type: ${resolvedTypeText}`));
       return resolvedTypeText;
     }
   }
 
   // Default case: return the type text
-  console.log(chalk.green(`[DEBUG] Resolved type: ${typeText}`));
+  if (logLevel === 'debug') console.log(chalk.green(`[DEBUG] Resolved type: ${typeText}`));
   return typeText;
 }
 
@@ -92,9 +92,10 @@ export async function extractTypeInformation(
   scanPath: string,
   tsFiles: string[],
   outputPath: string,
-  fileMap: Map<string, string>
+  fileMap: Map<string, string>,
+  logLevel?: 'silent' | 'info' | 'debug' // Add this parameter
 ): Promise<TypeInformation> {
-  console.log(chalk.cyan(`[NATS] Extracting type information...`));
+  if (logLevel === 'info' || logLevel === 'debug') console.log(chalk.cyan(`[NATS] Extracting type information...`));
 
   const project = new Project();
   project.addSourceFilesAtPaths(tsFiles);
@@ -115,14 +116,14 @@ export async function extractTypeInformation(
 
       classDeclaration.getMethods().forEach(methodDeclaration => {
         const methodName = methodDeclaration.getName();
-        console.log(chalk.magenta(`[DEBUG] Processing method: ${methodName}`));
+        if (logLevel === 'debug') console.log(chalk.magenta(`[DEBUG] Processing method: ${methodName}`));
 
         // Extract method parameters
         const params: { type: string; name: string; optional: boolean }[] = [];
         methodDeclaration.getParameters().forEach(parameter => {
           const paramType = parameter.getType();
           const typeText = resolveTypeText(paramType, parameter);
-          console.log(chalk.magenta(`[DEBUG] Parameter: ${parameter.getName()}, Type: ${typeText}`));
+          if (logLevel === 'debug') console.log(chalk.magenta(`[DEBUG] Parameter: ${parameter.getName()}, Type: ${typeText}`));
 
           params.push({
             type: typeText,
@@ -137,7 +138,7 @@ export async function extractTypeInformation(
         // Extract method return type
         const returnType = methodDeclaration.getReturnType();
         const returnTypeText = resolveTypeText(returnType, methodDeclaration);
-        console.log(chalk.magenta(`[DEBUG] Return type: ${returnTypeText}`));
+        if (logLevel === 'debug') console.log(chalk.magenta(`[DEBUG] Return type: ${returnTypeText}`));
 
         methodReturns.set(methodName, returnTypeText);
 
@@ -157,6 +158,6 @@ export async function extractTypeInformation(
     });
   }
 
-  console.log(chalk.cyan(`[NATS] Finished extracting type information`));
+  if (logLevel === 'info' || logLevel === 'debug') console.log(chalk.cyan(`[NATS] Finished extracting type information`));
   return typeInfo;
 }

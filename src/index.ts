@@ -80,7 +80,7 @@ function generateInterfaceString(classInfos: ClassInfo[], typeInfo: TypeInformat
 }
 
 export async function generateExposedMethodsType(
-    options: { scanPath: string, excludeFiles?: string[], returnType?: string },
+    options: { scanPath: string, excludeFiles?: string[], returnType?: string, logLevel?: 'silent' | 'info' | 'debug' },
     outputPath: string,
 ) {
     try {
@@ -92,8 +92,15 @@ export async function generateExposedMethodsType(
         project.addSourceFilesAtPaths(tsFiles);
 
         const fileMap = await scanProject(options.scanPath);
+        const { logLevel } = options;
 
-        const typeInfo = await extractTypeInformation(options.scanPath, tsFiles, outputPath, fileMap);
+        const typeInfo = await extractTypeInformation(
+            options.scanPath,
+            tsFiles,
+            outputPath,
+            fileMap,
+            options.logLevel
+        );
         const classInfos = await scanClasses(options.scanPath, tsFiles);
         const interfaceString = generateInterfaceString(classInfos, typeInfo, options.returnType || 'raw', project);
 

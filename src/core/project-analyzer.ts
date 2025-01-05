@@ -4,7 +4,7 @@ import { ClassInfo, MethodInfo } from '../interfaces/class-info.js';
 
 
 export async function scanClasses(scanPath: string, tsFiles: string[]): Promise<ClassInfo[]> {
-    console.log(chalk.cyan(`[NATS] Scanning classes in ${scanPath}`));
+    // if (logLevel === 'info') console.log(chalk.cyan(`[NATS] Scanning classes in ${scanPath}`));
     const project = new Project();
     project.addSourceFilesAtPaths(tsFiles);
 
@@ -17,13 +17,13 @@ export async function scanClasses(scanPath: string, tsFiles: string[]): Promise<
             const methods: MethodInfo[] = [];
             classDeclaration.getMethods().forEach(methodDeclaration => {
                 const methodName = methodDeclaration.getName();
-                console.log(chalk.cyan(`[NATS] Found method: ${chalk.bold(methodName)} in class ${chalk.bold(className)}`));
+                // console.log(chalk.cyan(`[NATS] Found method: ${chalk.bold(methodName)} in class ${chalk.bold(className)}`));
                 methods.push({ methodName });
             });
             classInfos.push({ className, methods });
         });
     }
 
-    console.log(chalk.yellow(`[NATS] Found ${classInfos.length} classes with methods`));
+    // if (logLevel === 'info') console.log(chalk.yellow(`[NATS] Found ${classInfos.length} classes with methods`));
     return classInfos;
 }

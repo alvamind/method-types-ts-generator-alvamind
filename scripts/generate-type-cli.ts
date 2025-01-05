@@ -10,6 +10,7 @@ interface CliOptions {
   excludeFiles?: string[];
   outputFile: string;
   returnType?: 'promise' | 'observable' | 'raw';
+  logLevel?: 'silent' | 'info' | 'debug';
 }
 
 function parseArgs(): CliOptions {
@@ -34,6 +35,11 @@ function parseArgs(): CliOptions {
             options.returnType = value as CliOptions['returnType'];
           }
           break;
+        case 'logLevel':
+          if (['silent', 'info', 'debug'].includes(value)) {
+            options.logLevel = value as CliOptions['logLevel'];
+          }
+          break;
       }
     }
   }
@@ -52,19 +58,23 @@ function parseArgs(): CliOptions {
     options.returnType = 'raw';
   }
 
+  if (!options.logLevel) {
+    options.logLevel = 'silent';
+  }
+
   return options as CliOptions;
 }
 
 
 async function main() {
-  console.log(chalk.blue.bold('\n=== Method Types Generator ==='));
+  if (parseArgs().logLevel !== 'silent') console.log(chalk.blue.bold('\n=== Method Types Generator ==='));
   try {
     const options = parseArgs();
-    console.log(chalk.cyan('Configuration:'));
-    console.log(chalk.gray(`Target Directory: ${options.targetDir}`));
-    console.log(chalk.gray(`Exclude Patterns: ${options.excludeFiles?.join(', ') || 'none'}`));
-    console.log(chalk.gray(`Output File: ${options.outputFile}`));
-    console.log(chalk.gray(`Return Type: ${options.returnType}\n`));
+    if (options.logLevel === 'info' || options.logLevel === 'debug') console.log(chalk.cyan('Configuration:'));
+    if (options.logLevel === 'info' || options.logLevel === 'debug') console.log(chalk.gray(`Target Directory: ${options.targetDir}`));
+    if (options.logLevel === 'info' || options.logLevel === 'debug') console.log(chalk.gray(`Exclude Patterns: ${options.excludeFiles?.join(', ') || 'none'}`));
+    if (options.logLevel === 'info' || options.logLevel === 'debug') console.log(chalk.gray(`Output File: ${options.outputFile}`));
+    if (options.logLevel === 'info' || options.logLevel === 'debug') console.log(chalk.gray(`Return Type: ${options.returnType}\n`));
 
 
     await generateExposedMethodsType(
@@ -72,13 +82,14 @@ async function main() {
         scanPath: options.targetDir,
         excludeFiles: options.excludeFiles,
         returnType: options.returnType,
+        logLevel: options.logLevel
       },
       options.outputFile,
     );
 
 
-    console.log(chalk.green.bold(`\n✓ Successfully generated type definitions`));
-    console.log(chalk.gray(`Output: ${path.resolve(options.outputFile)}\n`));
+    if (options.logLevel !== 'silent') console.log(chalk.green.bold(`\n✓ Successfully generated type definitions`));
+    if (options.logLevel !== 'silent') console.log(chalk.gray(`Output: ${path.resolve(options.outputFile)}\n`));
   } catch (error) {
     console.error(chalk.red.bold('\nError generating type definitions:'));
     console.error(chalk.red(error));
