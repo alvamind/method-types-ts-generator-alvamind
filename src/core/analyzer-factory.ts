@@ -1,11 +1,14 @@
 // src/core/analyzer-factory.ts
-import { scanClasses, extractTypeInformation } from './project-analyzer';
-import { scanClassesRegex, extractTypeInformationRegex } from './regex-analyzer';
 import { ClassInfo } from '../interfaces/class-info';
 import { TypeInformation } from '../interfaces/type-information';
+import { ClassScanner } from './class-scanner';
+import { TsMorphTypeExtractor } from './ts-morph-type-extractor';
+import { RegexAnalyzer } from './regex-analyzer';
+
 export type AnalyzerType = 'ts-morph' | 'regex';
+
 export interface Analyzer {
-  scanClasses(scanPath: string, tsFiles: string[]): Promise<ClassInfo[]>;
+  scanClasses(tsFiles: string[]): Promise<ClassInfo[]>;
   extractTypeInformation(
     scanPath: string,
     tsFiles: string[],
@@ -13,18 +16,20 @@ export interface Analyzer {
     fileMap: Map<string, string>,
   ): Promise<TypeInformation>;
 }
+
 export function createAnalyzer(type: AnalyzerType): Analyzer {
   switch (type) {
     case 'ts-morph':
       return {
-        scanClasses,
-        extractTypeInformation,
+        scanClasses: async (tsFiles: string[]) => {
+          return new ClassScanner().scanClasses(tsFiles);
+        },
+        extractTypeInformation: async (scanPath: string, tsFiles: string[], outputPath: string, fileMap: Map<string, string>) => {
+          return new TsMorphTypeExtractor().extractTypeInformation(scanPath, tsFiles, outputPath, fileMap);
+        }
       };
     case 'regex':
-      return {
-        scanClasses: scanClassesRegex,
-        extractTypeInformation: extractTypeInformationRegex,
-      };
+      return new RegexAnalyzer();
     default:
       throw new Error(`Unknown analyzer type: ${type}`);
   }

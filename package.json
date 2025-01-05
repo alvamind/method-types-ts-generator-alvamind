@@ -21,7 +21,7 @@
     "method-types-ts-generator": "./dist/scripts/generate-type-cli.js"
   },
   "scripts": {
-    "source": "generate-source output=source.md exclude=dist/,README.md,*.test.ts,.gitignore",
+    "source": "generate-source output=source.md exclude=dist/,README.md,.gitignore",
     "dev": "bun run src/index.ts --watch",
     "build": "tsc && tsc -p tsconfig.build.json",
     "commit": "commit",
