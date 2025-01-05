@@ -18,13 +18,16 @@
     "url": "https://github.com/alvamind/method-types-ts-generator-alvamind.git"
   },
   "bin": {
-    "method-types-ts-generator-alvamind": "./dist/scripts/generate-type-cli.js"
+    "method-types-ts-generator": "./dist/scripts/generate-type-cli.js"
   },
   "scripts": {
+    "source": "generate-source output=source.md exclude=dist/,README.md,nats-rpc.test.ts,rpc-nats-alvamind-1.0.0.tgz,.gitignore",
     "dev": "bun run src/index.ts --watch",
     "build": "tsc && tsc -p tsconfig.build.json",
-    "clean": "rimraf dist",
-    "prebuild": "npm run clean"
+    "clean": "rimraf dist && clean",
+    "commit": "commit",
+    "split-code": "split-code source=combined.ts markers=src/,lib/ outputDir=./output",
+    "publish-npm": "publish-npm patch"
   },
   "keywords": [
     "typescript",
@@ -42,7 +45,9 @@
     "index.d.ts"
   ],
   "dependencies": {
-    "pino": "^8.21.0",
+    "alvamind-tools": "^1.0.16",
+    "chalk": "4.1.2",
+    "ts-morph": "^25.0.0",
     "typescript": "^5.7.2"
   },
   "devDependencies": {
