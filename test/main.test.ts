@@ -6,9 +6,10 @@ import { generateExposedMethodsType } from '../src';
 const testDir = path.join(__dirname, 'test-files');
 const outputDir = path.join(__dirname, 'output');
 
-beforeAll(async () => {
+beforeEach(async () => {
+  await fs.rm(testDir, { recursive: true, force: true });
   await fs.mkdir(testDir, { recursive: true });
-  await fs.mkdir(outputDir, { recursive: true });
+  await fs.writeFile(path.join(testDir, 'temp.ts'), '', 'utf-8');
 });
 
 afterAll(async () => {

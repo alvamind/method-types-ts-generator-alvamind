@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import 'reflect-metadata';
-import { generateExposedMethodsType } from '../src/generate-exposed-types';
+import { generateExposedMethodsType } from '../src/index';
 import chalk from 'chalk';
 import * as path from "path";
 

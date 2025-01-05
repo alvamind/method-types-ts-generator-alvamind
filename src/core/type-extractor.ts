@@ -1,112 +1,162 @@
-import { Project, SourceFile, Type } from 'ts-morph';
+import { Project, Type, TypeFormatFlags } from 'ts-morph';
 import { TypeInformation } from '../interfaces/type-information';
 import { resolveImportPath } from './import-resolver';
 import chalk from 'chalk';
 import * as path from 'path';
 
-
 async function collectImports(
-    declaration: any,
-    imports: Set<string>,
-    project: Project,
-    outputPath: string,
-    scanPath: string,
-    fileMap: Map<string, string>
+  declaration: any,
+  imports: Set<string>,
+  project: Project,
+  outputPath: string,
+  scanPath: string,
+  fileMap: Map<string, string>
 ) {
-    if (!declaration) return;
+  if (!declaration) return;
 
-    const symbol = declaration.getSymbol();
-    if (!symbol) return;
+  const symbol = declaration.getSymbol();
+  if (!symbol) return;
 
-    const typeName = symbol.getName();
+  const typeName = symbol.getName();
 
-    if (["T", "K", "U", "V"].includes(typeName) || ["Promise"].includes(typeName)) {
-        return;
+  if (["T", "K", "U", "V"].includes(typeName) || ["Promise"].includes(typeName)) {
+    return;
+  }
+
+  const declarations = symbol.getDeclarations();
+  if (!declarations || declarations.length === 0) return;
+
+  const sourceFile = declarations[0].getSourceFile();
+  if (!sourceFile) return;
+
+  if (sourceFile.getFilePath().includes("node_modules/typescript/lib")) {
+    return;
+  }
+
+  const modulePath = sourceFile.getFilePath();
+  const fileName = path.basename(modulePath, '.ts');
+
+  const importPath = resolveImportPath(outputPath, modulePath, fileMap);
+
+  if (!Array.from(imports).some(imp => imp.includes(`{ ${typeName} }`))) {
+    imports.add(`import { ${typeName} } from '${importPath}';`);
+  }
+}
+
+function resolveTypeText(type: Type, node: any): string {
+  const typeText = type.getText();
+  console.log(chalk.yellow(`[DEBUG] Resolving type: ${typeText}`));
+
+  // Handle utility types like Partial and Pick
+  if (typeText.startsWith('Partial<') || typeText.startsWith('Pick<')) {
+    console.log(chalk.blue(`[DEBUG] Detected utility type: ${typeText}`));
+    const typeArguments = type.getTypeArguments();
+    console.log(chalk.blue(`[DEBUG] Type arguments: ${typeArguments.length}`));
+
+    if (typeArguments.length > 0) {
+      const typeArgTexts = typeArguments.map(arg => {
+        const argText = arg.getText(node, TypeFormatFlags.NoTruncation);
+        console.log(chalk.blue(`[DEBUG] Type argument: ${argText}`));
+        return argText;
+      });
+      const resolvedTypeText = typeText.replace(/<.*>/, `<${typeArgTexts.join(', ')}>`);
+      console.log(chalk.green(`[DEBUG] Resolved utility type: ${resolvedTypeText}`));
+      return resolvedTypeText;
     }
+  }
 
-    const declarations = symbol.getDeclarations();
-    if (!declarations || declarations.length === 0) return;
+  // Handle Promise types
+  if (typeText.startsWith('Promise<')) {
+    console.log(chalk.blue(`[DEBUG] Detected Promise type: ${typeText}`));
+    const typeArguments = type.getTypeArguments();
+    console.log(chalk.blue(`[DEBUG] Promise type arguments: ${typeArguments.length}`));
 
-    const sourceFile = declarations[0].getSourceFile();
-    if (!sourceFile) return;
-
-    if (sourceFile.getFilePath().includes("node_modules/typescript/lib")) {
-        return;
+    if (typeArguments.length > 0) {
+      const typeArgTexts = typeArguments.map(arg => {
+        const argText = arg.getText(node, TypeFormatFlags.NoTruncation);
+        console.log(chalk.blue(`[DEBUG] Promise type argument: ${argText}`));
+        return argText;
+      });
+      const resolvedTypeText = `Promise<${typeArgTexts.join(', ')}>`;
+      console.log(chalk.green(`[DEBUG] Resolved Promise type: ${resolvedTypeText}`));
+      return resolvedTypeText;
     }
+  }
 
-    const modulePath = sourceFile.getFilePath();
-    const fileName = path.basename(modulePath, '.ts');
-
-    const importPath = resolveImportPath(outputPath, modulePath, fileMap);
-
-    if (!Array.from(imports).some(imp => imp.includes(`{ ${typeName} }`))) {
-        imports.add(`import { ${typeName} } from '${importPath}';`);
-    }
+  // Default case: return the type text
+  console.log(chalk.green(`[DEBUG] Resolved type: ${typeText}`));
+  return typeText;
 }
 
 export async function extractTypeInformation(
-    scanPath: string,
-    tsFiles: string[],
-    outputPath: string,
-    fileMap: Map<string, string>
+  scanPath: string,
+  tsFiles: string[],
+  outputPath: string,
+  fileMap: Map<string, string>
 ): Promise<TypeInformation> {
-    console.log(chalk.cyan(`[NATS] Extracting type information...`));
+  console.log(chalk.cyan(`[NATS] Extracting type information...`));
 
-    const project = new Project();
-    project.addSourceFilesAtPaths(tsFiles);
+  const project = new Project();
+  project.addSourceFilesAtPaths(tsFiles);
 
-    const typeInfo: TypeInformation = {
-        imports: new Set<string>(),
-        methodParams: new Map(),
-        methodReturns: new Map(),
-        localInterfaces: new Set<string>(),
-    };
+  const typeInfo: TypeInformation = {
+    imports: new Set<string>(),
+    methodParams: new Map(),
+    methodReturns: new Map(),
+    localInterfaces: new Set<string>(),
+  };
 
-    for (const sourceFile of project.getSourceFiles()) {
-        sourceFile.getClasses().forEach(classDeclaration => {
-            const className = classDeclaration.getName();
-            if (!className) return;
-            const methodParams = new Map<string, { type: string; name: string; optional: boolean }[]>();
-            const methodReturns = new Map<string, string>();
+  for (const sourceFile of project.getSourceFiles()) {
+    sourceFile.getClasses().forEach(classDeclaration => {
+      const className = classDeclaration.getName();
+      if (!className) return;
+      const methodParams = new Map<string, { type: string; name: string; optional: boolean }[]>();
+      const methodReturns = new Map<string, string>();
 
-            classDeclaration.getMethods().forEach(methodDeclaration => {
-                const methodName = methodDeclaration.getName();
+      classDeclaration.getMethods().forEach(methodDeclaration => {
+        const methodName = methodDeclaration.getName();
+        console.log(chalk.magenta(`[DEBUG] Processing method: ${methodName}`));
 
-                // Extract method parameters
-                const params: { type: string; name: string; optional: boolean }[] = [];
-                methodDeclaration.getParameters().forEach(parameter => {
-                    const paramType = parameter.getType();
-                    const typeText = paramType.getText(parameter);
-                    params.push({
-                        type: typeText,
-                        name: parameter.getName(),
-                        optional: parameter.isOptional()
-                    });
-                    collectImports(parameter.getType().getSymbol()?.getDeclarations()?.[0], typeInfo.imports, project, outputPath, scanPath, fileMap);
-                });
-                methodParams.set(methodName, params);
+        // Extract method parameters
+        const params: { type: string; name: string; optional: boolean }[] = [];
+        methodDeclaration.getParameters().forEach(parameter => {
+          const paramType = parameter.getType();
+          const typeText = resolveTypeText(paramType, parameter);
+          console.log(chalk.magenta(`[DEBUG] Parameter: ${parameter.getName()}, Type: ${typeText}`));
 
-                // Extract method return type
-                const returnType = methodDeclaration.getReturnType();
-                const returnTypeText = returnType.getText(methodDeclaration);
-                methodReturns.set(methodName, returnTypeText);
+          params.push({
+            type: typeText,
+            name: parameter.getName(),
+            optional: parameter.isOptional()
+          });
 
-                // Collect imports for return type
-                const returnTypeSymbol = returnType.getSymbol();
-                if (returnTypeSymbol && returnTypeSymbol.getName() === "Promise") {
-                    returnType.getTypeArguments().forEach(typeArg => {
-                        collectImports(typeArg.getSymbol()?.getDeclarations()?.[0], typeInfo.imports, project, outputPath, scanPath, fileMap);
-                    });
-                } else {
-                    collectImports(returnTypeSymbol?.getDeclarations()?.[0], typeInfo.imports, project, outputPath, scanPath, fileMap);
-                }
-            });
-
-            typeInfo.methodParams.set(className, methodParams);
-            typeInfo.methodReturns.set(className, methodReturns);
+          collectImports(parameter.getType().getSymbol()?.getDeclarations()?.[0], typeInfo.imports, project, outputPath, scanPath, fileMap);
         });
-    }
+        methodParams.set(methodName, params);
 
-    console.log(chalk.cyan(`[NATS] Finished extracting type information`));
-    return typeInfo;
+        // Extract method return type
+        const returnType = methodDeclaration.getReturnType();
+        const returnTypeText = resolveTypeText(returnType, methodDeclaration);
+        console.log(chalk.magenta(`[DEBUG] Return type: ${returnTypeText}`));
+
+        methodReturns.set(methodName, returnTypeText);
+
+        // Collect imports for return type
+        const returnTypeSymbol = returnType.getSymbol();
+        if (returnTypeSymbol && returnTypeSymbol.getName() === "Promise") {
+          returnType.getTypeArguments().forEach(typeArg => {
+            collectImports(typeArg.getSymbol()?.getDeclarations()?.[0], typeInfo.imports, project, outputPath, scanPath, fileMap);
+          });
+        } else {
+          collectImports(returnTypeSymbol?.getDeclarations()?.[0], typeInfo.imports, project, outputPath, scanPath, fileMap);
+        }
+      });
+
+      typeInfo.methodParams.set(className, methodParams);
+      typeInfo.methodReturns.set(className, methodReturns);
+    });
+  }
+
+  console.log(chalk.cyan(`[NATS] Finished extracting type information`));
+  return typeInfo;
 }
