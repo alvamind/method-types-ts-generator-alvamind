@@ -45,8 +45,7 @@ export class RegexAnalyzer implements Analyzer {
 
 
         const methods: MethodInfo[] = [];
-        const methodRegex = /(?:public|private|protected)?\s*(?:async\s+)?(\w+)\s*(?:<[^>]*>)?\s*\([^)]*\)\s*(?::\s*[^{;]+)?/g;
-        let methodMatch;
+        const methodRegex = /(?:public|private|protected)?\s*(?:async\s+)?(\w+)\s*(?:<([^>]*)>)?\s*\(([^)]*)\)\s*(?::\s*([^{;]+))(?=\s*[{;])/g; let methodMatch;
         while ((methodMatch = methodRegex.exec(classBody)) !== null) {
           const methodName = methodMatch[1];
           if (!methodName.startsWith('_') &&
@@ -84,7 +83,7 @@ export class RegexAnalyzer implements Analyzer {
       console.log(chalk.cyan(`[DEBUG] Processing file: ${filePath}`));
       const content = await fs.readFile(filePath, 'utf-8');
 
-      // Extract interfaces and types first
+      // Extract interfaces and types
       const typeDefRegex = /export\s+(interface|type)\s+(\w+)(?:<[^>]*>)?[^;{]*{[^}]*}/g;
       let typeMatch;
       while ((typeMatch = typeDefRegex.exec(content)) !== null) {
@@ -101,78 +100,19 @@ export class RegexAnalyzer implements Analyzer {
 
       while ((classMatch = classRegex.exec(content)) !== null) {
         const className = classMatch[1];
-        console.log(chalk.yellow(`[DEBUG] Processing class: ${className}`));
-
-        // Extract class body
-        const classStart = classMatch.index;
-        let braceCount = 0;
-        let classBody = '';
-        let inClass = false;
-
-        for (let i = classStart; i < content.length; i++) {
-          if (content[i] === '{') {
-            braceCount++;
-            if (!inClass) inClass = true;
-          } else if (content[i] === '}') {
-            braceCount--;
-          }
-
-          if (inClass) {
-            classBody += content[i];
-          }
-
-          if (inClass && braceCount === 0) {
-            break;
-          }
-        }
-
         const methodSignatures = new Map<string, MethodSignature[]>();
-        // Enhanced method regex to capture more details
-        const methodRegex = /(?:public|private|protected)?\s*(?:async\s+)?(\w+)\s*(?:<([^>]*)>)?\s*\(([^)]*)\)\s*(?::\s*([^{;]+))?/g;
-        let methodMatch;
 
+        // Extract class body and methods
+        const classBody = this.extractClassBody(content, classMatch.index);
+        const methodRegex = /(?:public|private|protected)?\s*(?:async\s+)?(\w+)\s*(?:<([^>]*)>)?\s*\(([^)]*)\)\s*(?::\s*([^{;]+))?/g;
+
+        let methodMatch;
         while ((methodMatch = methodRegex.exec(classBody)) !== null) {
           const methodName = methodMatch[1];
-          const typeParamsStr = methodMatch[2];
-          const paramsStr = methodMatch[3];
-          const returnTypeStr = methodMatch[4];
-
-          if (methodName && !methodName.startsWith('_') && !methodName.startsWith('#') && methodName !== 'constructor') {
-            console.log(chalk.green(`[DEBUG] Processing method: ${methodName}`));
-
-            // Parse type parameters with constraints
-            const typeParameters = this.parseTypeParameters(typeParamsStr || '');
-            console.log(chalk.yellow(`[DEBUG] Type parameters for ${methodName}:`, typeParameters));
-
-            // Parse method parameters
-            const parameters = this.parseParameters(paramsStr || '');
-            console.log(chalk.yellow(`[DEBUG] Parameters for ${methodName}:`, parameters));
-
-            // Clean and process return type
-            const returnType = this.cleanupType(returnTypeStr || 'void');
-            console.log(chalk.yellow(`[DEBUG] Return type for ${methodName}:`, returnType));
-
-            const signature: MethodSignature = {
-              name: methodName,
-              typeParameters,
-              parameters,
-              returnType
-            };
-
-            // Add to method signatures, handling overloads
+          if (!methodName.startsWith('_') && !methodName.startsWith('#') && methodName !== 'constructor') {
+            const signature = this.extractMethodSignature(methodMatch);
             const existingSignatures = methodSignatures.get(methodName) || [];
-            const isDuplicate = existingSignatures.some(existing =>
-              this.areSignaturesEqual(existing, signature)
-            );
-
-            if (!isDuplicate) {
-              console.log(chalk.cyan(`[DEBUG] Adding signature for ${methodName}:`), signature);
-              existingSignatures.push(signature);
-              methodSignatures.set(methodName, existingSignatures);
-            }
-
-            // Extract and add any referenced types from parameters and return type
-            this.extractReferencedTypes(signature, filePath, outputPath, fileMap, typeInfo);
+            methodSignatures.set(methodName, [...existingSignatures, signature]);
           }
         }
 
@@ -185,12 +125,31 @@ export class RegexAnalyzer implements Analyzer {
     return typeInfo;
   }
 
-  private areSignaturesEqual(sig1: MethodSignature, sig2: MethodSignature): boolean {
-    return sig1.name === sig2.name &&
-      sig1.returnType === sig2.returnType &&
-      this.areParamsEqual(sig1.parameters, sig2.parameters) &&
-      this.areTypeParamsEqual(sig1.typeParameters, sig2.typeParameters);
+  private extractClassBody(content: string, startIndex: number): string {
+    let braceCount = 0;
+    let classBody = '';
+    let inClass = false;
+
+    for (let i = startIndex; i < content.length; i++) {
+      if (content[i] === '{') {
+        braceCount++;
+        if (!inClass) inClass = true;
+      } else if (content[i] === '}') {
+        braceCount--;
+      }
+
+      if (inClass) {
+        classBody += content[i];
+      }
+
+      if (inClass && braceCount === 0) {
+        break;
+      }
+    }
+
+    return classBody;
   }
+
 
   private areParamsEqual(params1: MethodParameter[], params2: MethodParameter[]): boolean {
     if (params1.length !== params2.length) return false;
@@ -210,32 +169,22 @@ export class RegexAnalyzer implements Analyzer {
     });
   }
 
-  private extractReferencedTypes(
-    signature: MethodSignature,
-    filePath: string,
-    outputPath: string,
-    fileMap: Map<string, string>,
-    typeInfo: TypeInformation
-  ): void {
-    // Extract types from parameters
-    signature.parameters.forEach(param => {
-      const types = this.findReferencedTypes(param.type);
-      types.forEach(type => {
-        if (!typeInfo.localInterfaces.has(type)) {
-          const importPath = resolveImportPath(outputPath, filePath, fileMap);
-          typeInfo.imports.add(`import { ${type} } from '${importPath}';`);
-        }
-      });
-    });
+  private extractMethodSignature(methodMatch: RegExpExecArray): MethodSignature {
+    const [, methodName, typeParams, params, returnType] = methodMatch;
 
-    // Extract types from return type
-    const returnTypes = this.findReferencedTypes(signature.returnType);
-    returnTypes.forEach(type => {
-      if (!typeInfo.localInterfaces.has(type)) {
-        const importPath = resolveImportPath(outputPath, filePath, fileMap);
-        typeInfo.imports.add(`import { ${type} } from '${importPath}';`);
-      }
-    });
+    const signature: MethodSignature = {
+      name: methodName,
+      typeParameters: this.parseTypeParameters(typeParams || ''),
+      parameters: this.parseParameters(params || ''),
+      returnType: this.cleanupType(returnType || 'void')
+    };
+
+    // Handle Promise return types
+    if (returnType?.includes('Promise<')) {
+      signature.returnType = `Promise<${this.cleanupType(returnType.match(/Promise\s*<(.+)>/)?.[1] || 'void')}>`;
+    }
+
+    return signature;
   }
 
   private findReferencedTypes(typeStr: string): Set<string> {
@@ -259,10 +208,11 @@ export class RegexAnalyzer implements Analyzer {
     if (!typeParamsStr.trim()) return [];
 
     console.log(chalk.yellow(`[DEBUG] Parsing type parameters: ${typeParamsStr}`));
-    return typeParamsStr.split(',').map(param => {
+    const params = typeParamsStr.split(',').map(param => {
       const [name, constraint] = param.trim().split(/\s+extends\s+/);
       return { name: name.trim(), constraint: constraint?.trim() };
     });
+    return params;
   }
 
   private parseParameters(paramsStr: string): MethodParameter[] {
@@ -309,9 +259,19 @@ export class RegexAnalyzer implements Analyzer {
 
 
   private cleanupType(type: string): string {
-    let cleaned = type.trim();
+    if (!type) return 'void';
 
-    // Handle complex generic types better
+    let cleaned = type.trim()
+      // Remove newlines and extra spaces
+      .replace(/\s+/g, ' ')
+      // Handle Promise wrapper
+      .replace(/Promise\s*<(.+)>/, '$1')
+      // Clean up spaces around brackets
+      .replace(/\s*([<>])\s*/g, '$1')
+      // Clean up spaces around commas
+      .replace(/\s*,\s*/g, ', ');
+
+    // Handle nested generic types
     if (cleaned.includes('<')) {
       let depth = 0;
       let finalType = '';
@@ -330,16 +290,8 @@ export class RegexAnalyzer implements Analyzer {
       cleaned = finalType;
     }
 
-    // Remove Promise wrapper if raw return type requested
-    if (cleaned.startsWith('Promise<')) {
-      cleaned = cleaned.substring(8, cleaned.length - 1);
-    }
-
     // Handle default values
     cleaned = cleaned.replace(/\s*=\s*[^,)]+/g, '');
-
-    // Clean up spacing
-    cleaned = cleaned.replace(/\s+/g, ' ').trim();
 
     return cleaned;
   }
