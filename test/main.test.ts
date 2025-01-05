@@ -322,4 +322,172 @@ describe('Type Generator Test Suite', () => {
     expect(output).toMatch(/updateUser\s*\(\s*id:\s*number,\s*partialUser:\s*Partial\s*<\s*User\s*>\)/);
     expect(output).toMatch(/getFilteredUsers\s*\(\s*filter:\s*Pick\s*<\s*User,\s*['"]name['"]\s*\|\s*['"]email['"]\s*>\)/);
   });
+
+  test('Test Case 15: Method with default parameters', async () => {
+    const input = `
+      export class MyClass {
+        myMethod(input: string = "default"): string {
+          return input;
+        }
+      }
+    `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test15.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toMatch(/myMethod\s*\(\s*input\?\s*:\s*string\s*\):\s*string/);
+  });
+
+  test('Test Case 16: Overloaded methods', async () => {
+    const input = `
+      export class MyClass {
+        myMethod(input: string): string;
+        myMethod(input: number): number;
+        myMethod(input: string | number): string | number {
+          return input;
+        }
+      }
+    `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test16.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toMatch(/myMethod\s*\(\s*input:\s*string\s*\):\s*string/);
+    expect(output).toMatch(/myMethod\s*\(\s*input:\s*number\s*\):\s*number/);
+  });
+
+  test('Test Case 17: Class inheritance', async () => {
+    const input = `
+      export class BaseClass {
+        baseMethod(): string {
+          return "base";
+        }
+      }
+
+      export class MyClass extends BaseClass {
+        myMethod(): string {
+          return "child";
+        }
+      }
+    `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test17.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toMatch(/baseMethod\s*\(\s*\):\s*string/);
+    expect(output).toMatch(/myMethod\s*\(\s*\):\s*string/);
+  });
+
+  test('Test Case 18: Complex nested generics', async () => {
+    const input = `
+      export interface MyData<T> {
+        data: T;
+      }
+
+      export class MyClass {
+        myMethod<T, K>(input: T, option: K): Promise<MyData<{ input: T; option: K; nested: MyData<K> }>> {
+          return Promise.resolve({ data: { input, option, nested: { data: option } } });
+        }
+      }
+    `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test18.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toMatch(/myMethod\s*<\s*T,\s*K\s*>\s*\(\s*input:\s*T,\s*option:\s*K\s*\):\s*Promise\s*<\s*MyData\s*<\s*\{\s*input:\s*T;\s*option:\s*K;\s*nested:\s*MyData\s*<\s*K\s*>;\s*}\s*>\s*>/);
+  });
+
+  test('Test Case 21: Async/Await with complex return type', async () => {
+    const input = `
+      export interface Response<T> {
+        status: number;
+        data: T;
+      }
+
+      export class ApiService {
+        async fetchData<T>(url: string): Promise<Response<T>> {
+          const response = await fetch(url);
+          return { status: response.status, data: await response.json() };
+        }
+      }
+    `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test21.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toMatch(/fetchData\s*<\s*T\s*>\s*\(\s*url:\s*string\s*\):\s*Promise\s*<\s*Response\s*<\s*T\s*>\s*>/);
+  });
+
+  test('Test Case 22: Readonly properties and methods', async () => {
+    const input = `
+      export class ConfigService {
+        readonly apiUrl: string = "https://api.example.com";
+
+        getConfig(): { apiUrl: string } {
+          return { apiUrl: this.apiUrl };
+        }
+      }
+    `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test22.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toMatch(/getConfig\s*\(\s*\):\s*\{\s*apiUrl:\s*string;\s*\}/);
+  });
+
+  test('Test Case 23: Conditional types in method signatures', async () => {
+    const input = `
+      export type IsString<T> = T extends string ? true : false;
+
+      export class TypeChecker {
+        checkType<T>(input: T): IsString<T> {
+          return (typeof input === "string") as IsString<T>;
+        }
+      }
+    `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test23.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toMatch(/checkType\s*<\s*T\s*>\s*\(\s*input:\s*T\s*\):\s*IsString\s*<\s*T\s*>/);
+  });
+
+  test('Test Case 24: Mapped types in method signatures', async () => {
+    const input = `
+      export type ReadonlyRecord<K extends keyof any, T> = {
+        readonly [P in K]: T;
+      };
+
+      export class RecordService {
+        createRecord<K extends string, T>(keys: K[], value: T): ReadonlyRecord<K, T> {
+          return keys.reduce((acc, key) => ({ ...acc, [key]: value }), {} as ReadonlyRecord<K, T>);
+        }
+      }
+    `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test24.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toMatch(/createRecord\s*<\s*K\s*extends\s*string,\s*T\s*>\s*\(\s*keys:\s*K\[\],\s*value:\s*T\s*\):\s*ReadonlyRecord\s*<\s*K,\s*T\s*>/);
+  });
+
+  test('Test Case 25: Recursive types in method signatures', async () => {
+    const input = `
+      export interface TreeNode<T> {
+        value: T;
+        children: TreeNode<T>[];
+      }
+
+      export class TreeService {
+        createTree<T>(value: T, children: TreeNode<T>[] = []): TreeNode<T> {
+          return { value, children };
+        }
+      }
+    `;
+    await fs.writeFile(path.join(testDir, 'temp.ts'), input, 'utf-8');
+    const outputFile = path.join(outputDir, 'test25.d.ts');
+    await generateExposedMethodsType({ scanPath: testDir }, outputFile);
+    const output = await fs.readFile(outputFile, 'utf-8');
+    expect(output).toMatch(/createTree\s*<\s*T\s*>\s*\(\s*value:\s*T,\s*children\?\s*:\s*TreeNode\s*<\s*T\s*>\[\]\s*\):\s*TreeNode\s*<\s*T\s*>/);
+  });
 });
