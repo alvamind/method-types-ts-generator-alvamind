@@ -43,6 +43,7 @@ export class MyClass {
       if (secondOverload.getReturnType().getText() !== 'number') return { passed: false, message: `Expected return type number in second overload, but found ${secondOverload.getReturnType().getText()}` };
 
       return { passed: true };
-    }
+    },
+    assertType: "regex"
   },
 };

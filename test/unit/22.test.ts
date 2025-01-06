@@ -33,6 +33,7 @@ return { apiUrl: this.apiUrl };
       if (getConfigMethod.getParameters().length !== 0) return { passed: false, message: `Expected 0 parameter for getConfig, but found ${getConfigMethod.getParameters().length}` };
       if (!getConfigMethod.getReturnType().getText().includes('{ apiUrl: string; }')) return { passed: false, message: `Expected return type { apiUrl: string; } for getConfig, but found ${getConfigMethod.getReturnType().getText()}` };
       return { passed: true };
-    }
+    },
+    assertType: "ts-morph"
   },
 };

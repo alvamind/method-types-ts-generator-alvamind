@@ -54,6 +54,7 @@ processWithMultiOption<T, K>(input: T, option: K): Promise<MyData<{ input: T, op
 
       if (!processWithOptionMethod.getReturnType().getText().includes('MyData<T>')) return { passed: false, message: `Expected return type MyData<T> for processWithOption, but found ${processWithOptionMethod.getReturnType().getText()}` };
       return { passed: true };
-    }
+    },
+    assertType: "ts-morph"
   }
 };

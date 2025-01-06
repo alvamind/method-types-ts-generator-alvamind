@@ -41,27 +41,18 @@ export const test28: TestCase = {
       if (parameters.length !== 1) {
         return { passed: false, message: `Expected 1 parameter for myMethod, but found ${parameters.length}` };
       }
-      const param = parameters[0] as ParameterDeclaration;
-      const normalizeType = (type: string) => type
-        .replace(/\s+/g, ' ')  // normalize spaces
-        .trim();
-
-      const expectedParamType = normalizeType('string | number | TypeA | TypeB');
-      const actualParamType = normalizeType(param.getType().getText());
-      if (actualParamType !== expectedParamType) {
-        return { passed: false, message: `Expected parameter type '${expectedParamType}' for myMethod, but found '${actualParamType}'` };
+      const param = parameters[0] as ParameterDeclaration
+      if (param.getType().getText() !== 'string | number | TypeA | TypeB') {
+        return { passed: false, message: `Expected parameter type 'string | number | TypeA | TypeB' for myMethod, but found ${param.getType().getText()}` };
       }
-
-      const expectedReturnType = normalizeType('string | number | TypeA | TypeB');
-      const actualReturnType = normalizeType(myMethod.getReturnType().getText());
-      if (actualReturnType !== expectedReturnType) {
-        return { passed: false, message: `Expected return type '${expectedReturnType}' for myMethod, but found '${actualReturnType}'` };
+      if (myMethod.getReturnType().getText() !== 'string | number | TypeA | TypeB') {
+        return { passed: false, message: `Expected return type 'string | number | TypeA | TypeB' for myMethod, but found ${myMethod.getReturnType().getText()}` };
       }
 
       const sourceFile = project.getSourceFileOrThrow('test28.d.ts');
       const importDeclarations = sourceFile.getImportDeclarations();
-      const import1 = importDeclarations.find(imp => imp.getModuleSpecifierValue() === "../test-files/test28/temp");
-      const import2 = importDeclarations.find(imp => imp.getModuleSpecifierValue() === "../test-files/test28/temp");
+      const import1 = importDeclarations.find(imp => imp.getModuleSpecifierValue() === "../test-files/test28/temp")
+      const import2 = importDeclarations.find(imp => imp.getModuleSpecifierValue() === "../test-files/test28/temp")
       if (!import1) {
         return { passed: false, message: 'Import declaration for TypeA not found' };
       }

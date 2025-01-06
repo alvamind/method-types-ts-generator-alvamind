@@ -115,7 +115,7 @@ function getTypeString(type: Type, sourceFile: SourceFile, fileMap: Map<string, 
       .join(' | ');
   }
 
-  // Handle intersection types  
+  // Handle intersection types
   if (type.isIntersection()) {
     return type.getIntersectionTypes()
       .map(t => getTypeString(t, sourceFile, fileMap, outputPath))

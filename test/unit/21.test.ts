@@ -9,15 +9,15 @@ export const test21: TestCase = {
     fileName: 'temp.ts',
     content: `
 export interface Response<T> {
-  status: number;
-  data: T;
+status: number;
+data: T;
 }
 
 export class ApiService {
-  async fetchData<T>(url: string): Promise<Response<T>> {
-    const response = await fetch(url);
-    return { status: response.status, data: await response.json() };
-  }
+async fetchData<T>(url: string): Promise<Response<T>> {
+const response = await fetch(url);
+return { status: response.status, data: await response.json() };
+}
 }
 `,
   },
@@ -36,8 +36,8 @@ export class ApiService {
       if (fetchDataMethod.getParameters().length !== 1) return { passed: false, message: `Expected 1 parameter, but found ${fetchDataMethod.getParameters().length}` };
       const firstParameter = fetchDataMethod.getParameters()[0];
       if (firstParameter.getType().getText() !== 'string') return { passed: false, message: `Expected parameter type string for fetchData, but found ${firstParameter.getType().getText()}` };
-      const returnTypeText = fetchDataMethod.getReturnType().getText();
-      if (!returnTypeText.match(/Promise<Response<T>>/)) return { passed: false, message: `Expected return type Promise<Response<T>> for fetchData, but found ${returnTypeText}` };
+      const returnType = fetchDataMethod.getReturnType().getText();
+      if (!returnType.includes('Promise<Response<T>>')) return { passed: false, message: `Expected return type Promise<Response<T>> for fetchData, but found ${returnType}` };
       const typeParameters = fetchDataMethod.getTypeParameters();
       if (typeParameters.length !== 1) return { passed: false, message: `Expected 1 type parameter for fetchData, but found ${typeParameters.length}` };
       const firstTypeParameter = typeParameters[0];

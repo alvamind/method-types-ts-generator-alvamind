@@ -47,6 +47,7 @@ processWithMultiOption<T, K>(input: T, option: K): Promise<MyData<{ input: T, op
 
       if (!processMethod.getReturnType().getText().includes('Promise<MyData<string>>')) return { passed: false, message: `Expected return type Promise<MyData<string>>, but found ${processMethod.getReturnType().getText()}` };
       return { passed: true };
-    }
+    },
+    assertType: "regex"
   },
 };

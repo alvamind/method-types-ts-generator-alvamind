@@ -48,6 +48,7 @@ export const test11: TestCase = {
       if (secondTypeParameter.getName() !== 'K') return { passed: false, message: `Expected type parameter K, but found ${secondTypeParameter.getName()}` };
 
       return { passed: true };
-    }
+    },
+    assertType: "ts-morph"
   },
 };

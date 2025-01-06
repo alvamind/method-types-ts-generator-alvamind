@@ -2,7 +2,6 @@
 import { expect } from "bun:test";
 import { TestCase } from "../test.interface";
 import { InterfaceDeclaration, MethodSignature, TypeAliasDeclaration, TypeParameterDeclaration } from "ts-morph";
-
 export const test27: TestCase = {
   id: 'test27',
   description: 'Combined Union and Intersection Types',
@@ -32,23 +31,11 @@ export const test27: TestCase = {
       if (!myMethod) return { passed: false, message: 'myMethod method not found' };
       const inputParam = myMethod.getParameters()[0];
       if (!inputParam) return { passed: false, message: 'input parameter not found' };
-
-      const normalizeType = (type: string) => type
-        .replace(/\s+/g, ' ')  // normalize spaces
-        .trim();
-
-      const expectedReturnTypeText = normalizeType('string | number | TypeA & TypeB');
-      const actualReturnTypeText = normalizeType(myMethod.getReturnType().getText());
-      if (actualReturnTypeText !== expectedReturnTypeText) {
-        return { passed: false, message: `Expected return type "${expectedReturnTypeText}", but got "${actualReturnTypeText}"` };
-      }
-
-      const expectedInputTypeText = normalizeType('string | number | TypeA & TypeB');
-      const actualInputTypeText = normalizeType(inputParam.getType().getText());
-      if (actualInputTypeText !== expectedInputTypeText) {
-        return { passed: false, message: `Expected input type "${expectedInputTypeText}", but got "${actualInputTypeText}"` };
-      }
-
+      const returnType = myMethod.getReturnType();
+      const expectedReturnTypeText = 'string | number | TypeA & TypeB'
+      const expectedInputTypeText = 'string | number | TypeA & TypeB'
+      if (returnType.getText() !== expectedReturnTypeText) return { passed: false, message: `Expected return type "${expectedReturnTypeText}", but got "${returnType.getText()}"` };
+      if (inputParam.getType().getText() !== expectedInputTypeText) return { passed: false, message: `Expected input type "${expectedInputTypeText}", but got "${inputParam.getType().getText()}"` };
       const importDeclarations = project.getSourceFileOrThrow('test27.d.ts')?.getImportDeclarations();
       if (!importDeclarations) return { passed: false, message: 'Import Declarations not found' }
       const importTypeA = importDeclarations.find(declaration => declaration.getModuleSpecifierValue() === './temp' && declaration.getNamedImports().find(imp => imp.getName() === 'TypeA'));

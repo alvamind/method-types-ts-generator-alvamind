@@ -38,6 +38,7 @@ import { MethodSignature } from "ts-morph"; export const test5: TestCase = {
       if (firstTypeParameter.getName() !== 'T') return { passed: false, message: `Expected type parameter T, but found ${firstTypeParameter.getName()}` };
 
       return { passed: true };
-    }
+    },
+    assertType: "ts-morph"
   },
 };

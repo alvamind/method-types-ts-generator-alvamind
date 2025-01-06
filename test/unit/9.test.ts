@@ -33,6 +33,7 @@ import { MethodSignature } from "ts-morph"; export const test9: TestCase = {
       if (firstParameter.getType().getText() !== 'string') return { passed: false, message: `Expected parameter type string, but found ${firstParameter.getType().getText()}` };
       if (!methodSignature.getReturnType().getText().includes('MyData<string>')) return { passed: false, message: `Expected return type MyData<string>, but found ${methodSignature.getReturnType().getText()}` };
       return { passed: true };
-    }
+    },
+    assertType: "ts-morph"
   },
 };
