@@ -21,7 +21,7 @@
     "method-types-ts-generator": "./dist/scripts/generate-type-cli.js"
   },
   "scripts": {
-    "source": "generate-source output=source.md exclude=dist/,README.md,.gitignore",
+    "source": "generate-source --include=main.test.ts,test.interface.ts,19.test.ts, --exclude=dist/,README.md,.gitignore --output=source.md",
     "dev": "bun run src/index.ts --watch",
     "build": "tsc && tsc -p tsconfig.build.json",
     "commit": "commit",
@@ -45,7 +45,7 @@
     "index.d.ts"
   ],
   "dependencies": {
-    "alvamind-tools": "^1.0.17",
+    "alvamind-tools": "^1.0.19",
     "chalk": "4.1.2",
     "ts-morph": "^25.0.0",
     "typescript": "^5.7.2"

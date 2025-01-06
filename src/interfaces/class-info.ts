@@ -1,8 +1,8 @@
 export interface MethodInfo {
-    methodName: string;
+  methodName: string;
 }
 
 export interface ClassInfo {
-    className: string;
-    methods: MethodInfo[];
+  className: string;
+  methods: MethodInfo[];
 }

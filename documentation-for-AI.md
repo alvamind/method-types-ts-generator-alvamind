@@ -115,40 +115,23 @@
 *   **Implicit `void` and `Promise<void>` handling.**
 *   **Explicit return type handling.**
 
-**Final Workflow:**
-
-1.  **Setup:** Start with the existing project structure.
-2.  **Code:** Modify `src/core/type-extractor.ts`, `src/index.ts`, and `scripts/generate-type-cli.ts` based on rules.
-3.  **Test:** Run existing tests, add more tests if needed.
-4.  **Verify:** Manually verify generated `.d.ts` file and ensure the intellisense is correct.
-
-Okay, I understand. Let's add 10 more critical Q&A entries specifically focusing on the Core & Type Extraction aspects. This will provide even more clarity and cover potential edge cases.
-
 QnA
 
 **Core & Type Extraction:**
-
 1.  **Q: Return Type and `raw`, `promise`, `observable` Options:** How are return types handled with `raw`, `promise` and `observable` options?
     *   **A:** `raw` outputs the exact type as is (including `Promise<>`); `promise` wraps non-promise types with `Promise<>`; and `observable` wraps types with `Observable<>` from `rxjs`. If type is already wrapped, it is not wrapped again.
-
 2.  **Q: "Full Type String" Extraction:** What does extracting the "full type string" entail?
     *   **A:** Includes the complete type declaration as written (including generics, conditional types, etc) plus the *full import statement* (path, name, alias if any).
-
 3.  **Q: Type Resolution Priority & Circular Deps/Collisions:** How are types resolved, and what happens in circular dependencies or naming collisions?
     *   **A:** First, try to resolve from the import statement in source file. If no import, then built in types. Circular dependencies, name collisions (use alias), or not found types fallback to `any` with a warning.
-
 4. **Q: Complex Types and Generics:** How do you handle complex types, generics, and mapped/conditional types, built-in types like `Array<string>`, `Partial<User>`, and type operators?
     *   **A:** Extract full type string with imports, do not resolve.
-
 5. **Q: Import Statements Handling:** How are import statements resolved, and how to handle default and wildcard imports?
     *   **A:** Extract the full import statement. Use named imports, aliases, and from source file. Default and wildcard imports cause `any`.
-
 6. **Q: Inheritance & Overrides:** How are method signatures handled across inheritance chains and overrides?
     *   **A:** Use signature from the most derived class, skip private and protected.
-
 7. **Q: File System & Path Handling** How are types handled that come from outside `targetDir`, not in `tsconfig.json`, excluded, non existent, different extensions, `.d.ts` or that has syntax errors?
     *   **A:** For types from outside the `targetDir` or files not in `tsconfig.json`, use the import path as written. For files with syntax errors, or unresolvable paths or excluded files fallback to `any` with a warning. `.d.ts`, `.mts`, `.cts` are treated like `.ts`. Others use `any` with a warning.
-
 8.  **Q: Triple Slash, Global, Ambient and JSDoc:** How to handle triple-slash references, JSDoc annotations, global declarations, ambient declarations and `export =`?
     *   **A:** Use `any` with a warning as these are not supported.
 
@@ -156,31 +139,22 @@ QnA
 
 9. **Q: Literal Types:** How are literal types (e.g., `"string"`, `123`, `true`) handled?
     *   **A:** Extract the literal type directly as a type (e.g., `input: "string"` should become `input?: "string"`).
-
 10. **Q: Union and Intersection Types:** How are union ( `string | number`) and intersection types (`TypeA & TypeB`) handled?
     *   **A:** Extract the full type string, including the union or intersection. e.g., `(param: string | number)`
-
 11. **Q: Tuple Types:** How are tuple types (e.g., `[string, number]`) handled?
     *   **A:** Extract the full tuple type as written. e.g., `param: [string, number]`.
-
 12. **Q: Index Signatures:** How are index signatures (e.g., `{ [key: string]: number }`) handled?
      *   **A:** Extract the full index signature type as written. e.g., `param: { [key: string]: number }`.
-
 13. **Q: Type Aliases:** How are type aliases (`type MyType = string | number`) handled?
      *   **A:** Extract full type string and import statement.
-
 14. **Q: Enums:** How are enums (and their members) handled?
     *    **A:** Use the enum name and import statement. If the enum is declared in the same file, then the enum is used directly.
-
 15.  **Q: Recursive Types:** How are recursive types (e.g., `interface Node { children: Node[] }`) handled?
      *   **A:** Extract full type string and import statement.
-
 16.  **Q: Conditional Types:** How to handle conditional types?
      *   **A:** Extract full type string and import statement.
-
 17.  **Q: Mapped Types:** How to handle mapped types?
      *   **A:** Extract full type string and import statement.
-
 18.  **Q: Parameter Default Values:** How to handle parameters with default values?
     *   **A:**  Mark the parameter as optional. Example: `myMethod(input: string = "default")` output `myMethod(input?: string): Promise<infer R>`.
 
@@ -188,10 +162,8 @@ QnA
 
 19. **Q: Type String Formatting:** Should we format or clean the type string?
     *   **A:** No, output the extracted type string as is.
-
 20. **Q: `Observable` Import:** Where does `Observable` come from?
     *   **A:**  `Observable` is imported from `rxjs`.
-
 21. **Q: CLI Error Handling and Logging:** What errors should be reported by the CLI and what should the log levels output?
     *   **A:** Report file, parse, type resolution errors. `silent`: errors only; `info`: config, progress, output path; `debug`: verbose output.
 
@@ -199,11 +171,7 @@ QnA
 
 22. **Q: Unresolvable Types Fallback:** What should the tool output when type resolution fails?
     *   **A:** Use `any` with a warning that includes the file path where resolution failed.
-
 23. **Q: Testing:** What constitutes sufficient test coverage?
      *   **A:** Cover all edge cases and combinations of parameters, return types, inheritance, generics, optionals, mapped types, etc. Verify generated `.d.ts` content.
-
 24.  **Q: Contextual Types & "Easiest Way":** How are contextual types handled, and what is meant by "easiest way"?
     *   **A:** Copy contextual type information without resolving. "Easiest Way" means prioritize import statements from source file when resolving types, and skip AST resolution when not necessary.
-
-These additional 10 Q&A entries provide much more clarity on how the type generator should handle different TypeScript constructs. This should be the final and most comprehensive Q&A.

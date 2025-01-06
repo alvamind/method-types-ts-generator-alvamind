@@ -31,13 +31,13 @@ function generateInterfaceString(classInfos: ClassInfo[], typeInfo: TypeInformat
     methodSignatures?.forEach((signatures, methodName) => {
       signatures.forEach(signature => {
         const params = signature.parameters
-          .map(p => `${p.name}${p.optional ? "?" : ""}: ${p.type.replace(/import\\([^)]+\\)\\./g, '')}`)
+          .map(p => `${p.name}${p.optional ? "?" : ""}: ${p.type}`)
           .join(", ");
         const typeParams = signature.typeParameters.map(p => `${p.name}${p.constraint ? ` extends ${p.constraint}` : ''}`).join(",")
-        let returnTypeString = signature.returnType
-        returnTypeString = returnTypeString.replace(/import\([^)]+\)\./g, '');
+        let returnTypeString = signature.returnType;
         const isPromiseType = returnTypeString.startsWith('Promise<');
         if (isPromiseType && returnType === 'raw') {
+          // If the returnType is already wrapped in Promise, unwrap
           returnTypeString = returnTypeString.replace(/Promise<(.+)>/, '$1');
         }
         let returnTypeOutput: string;

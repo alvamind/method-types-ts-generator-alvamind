@@ -14,141 +14,413 @@ import {
   InterfaceDeclaration,
   ClassDeclaration,
   TypeFlags,
+  ts,
+  Identifier,
+  QualifiedName,
+  ExpressionWithTypeArguments,
+  ImportDeclaration,
+  StringLiteral,
+  VariableStatement,
+  VariableDeclaration,
+  JSDoc,
+  PropertyDeclaration,
+  ConstructorDeclaration,
+  MethodSignature,
+  TypeAliasDeclaration,
+  TypeLiteralNode,
+  PropertySignature,
+  IndexSignatureDeclaration,
+  CallSignatureDeclaration,
+  HeritageClause,
+  HeritageClauseableNode,
+  NamespaceImport,
+  BindingName,
+  BindingPattern,
+  ImportClause,
+  ImportSpecifier,
+  JSDocTag,
+  JSDocTypeExpression,
+  JSDocType,
+  GetAccessorDeclaration,
+  SetAccessorDeclaration,
+  SyntaxList,
+  ModifierableNode,
+  TypeElementTypes
 } from 'ts-morph';
-import { TypeInformation, MethodSignature, MethodParameter, TypeParameter } from '../interfaces/type-information';
+import { TypeInformation, MethodSignature as MethodSignatureInfo, MethodParameter, TypeParameter } from '../interfaces/type-information';
 import { resolveImportPath } from './import-resolver';
 import chalk from 'chalk';
 import * as path from 'path';
-async function collectImports(
-  declaration: Node | undefined,
-  imports: Set<string>,
-  project: Project,
-  outputPath: string,
-  scanPath: string,
-  fileMap: Map<string, string>
-) {
-  if (!declaration) return;
-  const symbol = declaration.getSymbol();
-  if (!symbol) return;
-  const typeName = symbol.getName();
-  if (["T", "K", "U", "V"].includes(typeName) || ["Promise"].includes(typeName)) {
-    return;
-  }
+import { logger } from '../utils/logger';
+
+
+function isPromiseType(type: Type): boolean {
+  return type.getText().startsWith('Promise<');
+}
+
+function isVoidType(type: Type): boolean {
+  return type.isVoid() || type.getText() === 'void';
+}
+
+function isAnyType(type: Type): boolean {
+  return type.isAny() || type.getText() === 'any';
+}
+
+function isBuiltInType(type: Type): boolean {
+  const builtInTypes = ['string', 'number', 'boolean', 'void', 'any', 'null', 'undefined', 'unknown', 'symbol'];
+  const typeText = type.getText()
+  return builtInTypes.includes(typeText);
+}
+function getImportStatement(symbol: Symbol | undefined, sourceFile: SourceFile, fileMap: Map<string, string>, outputPath: string, aliasName?: string): string | undefined {
+  if (!symbol) return undefined;
   const declarations = symbol.getDeclarations();
-  if (!declarations || declarations.length === 0) return;
-  const sourceFile = declarations[0].getSourceFile();
-  if (!sourceFile) return;
-  if (sourceFile.getFilePath().includes("node_modules/typescript/lib")) {
+  if (declarations.length === 0) return undefined
+  const firstDeclaration = declarations[0];
+  if (!firstDeclaration || !Node.isNode(firstDeclaration)) return undefined
+  const declarationSourceFile = firstDeclaration.getSourceFile();
+  if (declarationSourceFile === sourceFile) return undefined;
+  if (!fileMap.has(path.basename(declarationSourceFile.getFilePath(), '.ts'))) return undefined
+  const importPath = resolveImportPath(outputPath, declarationSourceFile.getFilePath(), fileMap);
+  let importName = symbol.getName();
+  if (aliasName) {
+    return `import { ${importName} as ${aliasName} } from '${importPath}';`;
+  }
+  return `import { ${importName} } from '${importPath}';`;
+}
+
+function getTypeStringFromTypeNode(node: TypeNode | undefined, sourceFile: SourceFile, fileMap: Map<string, string>, outputPath: string): string {
+  if (!node) return 'any';
+  const typeChecker = node.getProject().getTypeChecker();
+  const type = typeChecker.getTypeAtLocation(node)
+  const symbol = type.getSymbol();
+  const aliasSymbol = type.getAliasSymbol()
+  if (symbol || aliasSymbol) {
+    const importStatement = getImportStatement(aliasSymbol || symbol, sourceFile, fileMap, outputPath, aliasSymbol?.getName());
+    if (importStatement) {
+      let typeText = node.getText();
+      if (aliasSymbol && symbol?.getName() !== aliasSymbol.getName()) {
+        typeText = aliasSymbol.getName();
+      }
+      return typeText
+    }
+  }
+  return node.getText()
+}
+
+function getTypeString(type: Type, sourceFile: SourceFile, fileMap: Map<string, string>, outputPath: string): string {
+  // Handle union types
+  if (type.isUnion()) {
+    return type.getUnionTypes()
+      .map(t => getTypeString(t, sourceFile, fileMap, outputPath))
+      .join(' | ');
+  }
+
+  // Handle intersection types  
+  if (type.isIntersection()) {
+    return type.getIntersectionTypes()
+      .map(t => getTypeString(t, sourceFile, fileMap, outputPath))
+      .join(' & ');
+  }
+
+  const symbol = type.getSymbol();
+  const aliasSymbol = type.getAliasSymbol();
+  const actualSymbol = aliasSymbol || symbol;
+  if (actualSymbol) {
+    const importStatement = getImportStatement(actualSymbol, sourceFile, fileMap, outputPath, aliasSymbol?.getName());
+    if (importStatement) {
+      let typeText = type.getText();
+      if (aliasSymbol && symbol?.getName() !== aliasSymbol.getName()) {
+        typeText = aliasSymbol.getName();
+      }
+      return typeText;
+    }
+  }
+  if (isBuiltInType(type)) {
+    return type.getText()
+  }
+  return type.getText();
+}
+
+
+function extractTypeParameters(typeParameters: TypeParameterDeclaration[], sourceFile: SourceFile, fileMap: Map<string, string>, outputPath: string): TypeParameter[] {
+  return typeParameters.map(tp => {
+    const constraintType = tp.getConstraint();
+    const constraint = constraintType ? getTypeStringFromTypeNode(constraintType, sourceFile, fileMap, outputPath) : undefined;
+    return {
+      name: tp.getName(),
+      constraint,
+    }
+  });
+}
+
+function extractMethodParameters(parameters: ParameterDeclaration[], sourceFile: SourceFile, fileMap: Map<string, string>, outputPath: string): MethodParameter[] {
+  return parameters.map(parameter => {
+    const typeNode = parameter.getTypeNode()
+    const typeString = getTypeStringFromTypeNode(typeNode, sourceFile, fileMap, outputPath);
+    return {
+      name: parameter.getName(),
+      type: typeString,
+      optional: parameter.isOptional() || !!parameter.getInitializer()
+    };
+  });
+}
+
+function extractReturnType(method: MethodDeclaration | MethodSignature | ConstructorDeclaration | CallSignatureDeclaration | GetAccessorDeclaration | SetAccessorDeclaration, sourceFile: SourceFile, fileMap: Map<string, string>, outputPath: string): string {
+  const typeChecker = method.getProject().getTypeChecker();
+  let returnType: Type;
+  let returnTypeNode = method.getReturnTypeNode();
+
+  if (returnTypeNode) {
+    return getTypeStringFromTypeNode(returnTypeNode, sourceFile, fileMap, outputPath);
+  }
+
+  if (Node.isMethodDeclaration(method) || Node.isConstructorDeclaration(method) || Node.isCallSignatureDeclaration(method)) {
+    returnType = method.getSignature().getReturnType();
+  } else {
+    returnType = typeChecker.getSignatureFromNode(method as any)!.getReturnType();
+  }
+
+  // Handle async methods
+  if (Node.isMethodDeclaration(method) && method.isAsync()) {
+    const innerType = isPromiseType(returnType) ? returnType.getTypeArguments()[0] : returnType;
+    const typeString = getTypeString(innerType, sourceFile, fileMap, outputPath);
+    return `Promise<${typeString}>`;
+  }
+
+  // Handle existing Promise types
+  if (isPromiseType(returnType)) {
+    const innerType = returnType.getTypeArguments()[0];
+    if (isVoidType(innerType)) {
+      return 'Promise<void>';
+    }
+    const typeString = getTypeString(innerType, sourceFile, fileMap, outputPath);
+    return `Promise<${typeString}>`;
+  }
+
+  // ...remaining return type logic...
+  return getTypeString(returnType, sourceFile, fileMap, outputPath);
+}
+
+
+function extractMethodSignature(methodDeclaration: MethodDeclaration | MethodSignature | ConstructorDeclaration | CallSignatureDeclaration | GetAccessorDeclaration | SetAccessorDeclaration, sourceFile: SourceFile, fileMap: Map<string, string>, outputPath: string): MethodSignatureInfo[] {
+  const signatures: MethodSignatureInfo[] = [];
+
+  if (Node.isMethodDeclaration(methodDeclaration)) {
+    // Handle method overloads
+    const overloads = methodDeclaration.getOverloads();
+
+    overloads.forEach(overload => {
+      signatures.push({
+        name: overload.getName(),
+        parameters: extractMethodParameters(overload.getParameters(), sourceFile, fileMap, outputPath),
+        returnType: extractReturnType(overload, sourceFile, fileMap, outputPath),
+        typeParameters: extractTypeParameters(overload.getTypeParameters(), sourceFile, fileMap, outputPath)
+      });
+    });
+
+    // Add implementation signature if no overloads
+    if (signatures.length === 0) {
+      signatures.push({
+        name: methodDeclaration.getName(),
+        parameters: extractMethodParameters(methodDeclaration.getParameters(), sourceFile, fileMap, outputPath),
+        returnType: extractReturnType(methodDeclaration, sourceFile, fileMap, outputPath),
+        typeParameters: extractTypeParameters(methodDeclaration.getTypeParameters(), sourceFile, fileMap, outputPath)
+      });
+    }
+  } else {
+    // Handle other declaration types
+    let methodName = 'unknown';
+    if (Node.isConstructorDeclaration(methodDeclaration)) {
+      methodName = 'constructor';
+    } else if (Node.isCallSignatureDeclaration(methodDeclaration)) {
+      methodName = 'call';
+    } else if (Node.isGetAccessorDeclaration(methodDeclaration) || Node.isSetAccessorDeclaration(methodDeclaration)) {
+      methodName = methodDeclaration.getName();
+    }
+
+    signatures.push({
+      name: methodName,
+      parameters: extractMethodParameters(methodDeclaration.getParameters(), sourceFile, fileMap, outputPath),
+      returnType: extractReturnType(methodDeclaration, sourceFile, fileMap, outputPath),
+      typeParameters: extractTypeParameters(methodDeclaration.getTypeParameters(), sourceFile, fileMap, outputPath)
+    });
+  }
+
+  return signatures;
+}
+
+function extractProperties(declaration: ClassDeclaration | InterfaceDeclaration | TypeLiteralNode, sourceFile: SourceFile, fileMap: Map<string, string>, outputPath: string, methods: Map<string, MethodSignatureInfo[]>): void {
+  if (Node.isClassDeclaration(declaration) || Node.isInterfaceDeclaration(declaration)) {
+    declaration.getProperties().forEach(propertyDeclaration => {
+      if (Node.isPropertyDeclaration(propertyDeclaration)) {
+        const isStatic = propertyDeclaration.getModifiers().some(modifier => modifier.getKind() === SyntaxKind.StaticKeyword);
+        const isPrivate = propertyDeclaration.getModifiers().some(modifier => modifier.getKind() === SyntaxKind.PrivateKeyword);
+        const isProtected = propertyDeclaration.getModifiers().some(modifier => modifier.getKind() === SyntaxKind.ProtectedKeyword);
+
+        if (isStatic || isPrivate || isProtected) return;
+      }
+
+      const type = propertyDeclaration.getType();
+      const typeNode = propertyDeclaration.getTypeNode()
+      const typeString = getTypeStringFromTypeNode(typeNode, sourceFile, fileMap, outputPath);
+      methods.set(propertyDeclaration.getName(), [{
+        name: propertyDeclaration.getName(),
+        parameters: [],
+        returnType: typeString,
+        typeParameters: []
+      }]);
+    })
+  }
+}
+
+
+function extractIndexSignatures(declaration: TypeLiteralNode | InterfaceDeclaration, sourceFile: SourceFile, fileMap: Map<string, string>, outputPath: string, methods: Map<string, MethodSignatureInfo[]>): void {
+  declaration.getIndexSignatures().forEach(signature => {
+    const keyTypeNode = signature.getKeyTypeNode();
+    const returnTypeNode = signature.getReturnTypeNode();
+    const keyType = getTypeStringFromTypeNode(keyTypeNode, sourceFile, fileMap, outputPath);
+    const returnType = getTypeStringFromTypeNode(returnTypeNode, sourceFile, fileMap, outputPath);
+    const indexSignature = `[${signature.getKeyName()}: ${keyType}]`;
+
+    methods.set(indexSignature, [{
+      name: indexSignature,
+      parameters: [],
+      returnType: returnType,
+      typeParameters: []
+    }]);
+  });
+}
+
+function extractHeritageClauses(node: ClassDeclaration | InterfaceDeclaration, sourceFile: SourceFile, fileMap: Map<string, string>, outputPath: string, methods: Map<string, MethodSignatureInfo[]>): void {
+  if (!Node.isHeritageClauseable(node)) {
     return;
   }
-  const modulePath = sourceFile.getFilePath();
-  const fileName = path.basename(modulePath, '.ts');
-  const importPath = resolveImportPath(outputPath, modulePath, fileMap);
-  if (!Array.from(imports).some(imp => imp.includes(`{ ${typeName} }`))) {
-    imports.add(`import { ${typeName} } from '${importPath}';`);
-  }
+  const baseTypes = node.getBaseTypes();
+  baseTypes.forEach(baseType => {
+    const symbol = baseType.getSymbol()
+    if (!symbol) return
+    const declarations = symbol.getDeclarations();
+    if (declarations.length === 0) return
+    const firstDeclaration = declarations[0];
+    if (!firstDeclaration || !Node.isNode(firstDeclaration)) return;
+    if (Node.isInterfaceDeclaration(firstDeclaration)) {
+      extractInterfaceMethods(firstDeclaration, sourceFile, fileMap, outputPath, methods);
+    }
+    if (Node.isClassDeclaration(firstDeclaration)) {
+      extractClassMethods(firstDeclaration, sourceFile, fileMap, outputPath, methods);
+    }
+  });
+
 }
-function resolveType(type: Type, node: Node, logLevel?: 'silent' | 'info' | 'debug', typeChecker?: TypeChecker, imports?: Set<string>, project?: Project, outputPath?: string, scanPath?: string, fileMap?: Map<string, string>): string {
-  if (type.isString()) return "string";
-  if (type.isNumber()) return "number";
-  if (type.isBoolean()) return "boolean";
-  if (type.isNull()) return "null";
-  if (type.isUndefined()) return "undefined";
-  if (type.isAny()) return "any";
-  if (type.isUnknown()) return "unknown";
-  if (type.isVoid()) return "void";
-  if (type.isLiteral()) return JSON.stringify(type.getLiteralValue());
-  if (type.isObject()) {
-    const symbol = type.getSymbol();
-    if (symbol) {
-      if (type.isClass() || type.isInterface()) {
-        return symbol.getName();
+function extractClassMethods(declaration: ClassDeclaration, sourceFile: SourceFile, fileMap: Map<string, string>, outputPath: string, methods: Map<string, MethodSignatureInfo[]>): void {
+  declaration.getMethods().forEach(methodDeclaration => {
+    const isStatic = methodDeclaration.getModifiers().some(modifier => modifier.getKind() === SyntaxKind.StaticKeyword);
+    const isPrivate = methodDeclaration.getModifiers().some(modifier => modifier.getKind() === SyntaxKind.PrivateKeyword);
+    const isProtected = methodDeclaration.getModifiers().some(modifier => modifier.getKind() === SyntaxKind.ProtectedKeyword);
+    if (isStatic || isPrivate || isProtected) return;
+    const methodInfos = extractMethodSignature(methodDeclaration, sourceFile, fileMap, outputPath);
+    methodInfos.forEach(methodInfo => {
+      if (!methods.has(methodInfo.name)) {
+        methods.set(methodInfo.name, []);
       }
-    }
-    if (type.isTuple()) {
-      return `[${type.getTupleElements().map(t => resolveType(t, node, logLevel, typeChecker, imports, project, outputPath, scanPath, fileMap)).join(', ')}]`;
-    }
-    if (type.isAnonymous()) {
-      const properties = type.getProperties();
-      if (properties.length > 0) {
-        const props = properties.map(prop => {
-          const declaration = prop.getDeclarations()[0];
-          if (declaration && Node.isPropertySignature(declaration)) {
-            const name = prop.getName();
-            const propType = declaration.getType();
-            return `${name}${declaration.hasQuestionToken() ? "?" : ""}: ${resolveType(propType, node, logLevel, typeChecker, imports, project, outputPath, scanPath, fileMap)}`;
+      methods.get(methodInfo.name)!.push(methodInfo);
+    });
+  });
+  declaration.getConstructors().forEach(constructorDeclaration => {
+    const methodInfos = extractMethodSignature(constructorDeclaration, sourceFile, fileMap, outputPath);
+    methodInfos.forEach(methodInfo => {
+      if (!methods.has('constructor')) {
+        methods.set('constructor', []);
+      }
+      methods.get('constructor')!.push(methodInfo);
+    });
+  })
+  declaration.getGetAccessors().forEach(getAccessorDeclaration => {
+    const isStatic = getAccessorDeclaration.getModifiers().some(modifier => modifier.getKind() === SyntaxKind.StaticKeyword);
+    const isPrivate = getAccessorDeclaration.getModifiers().some(modifier => modifier.getKind() === SyntaxKind.PrivateKeyword);
+    const isProtected = getAccessorDeclaration.getModifiers().some(modifier => modifier.getKind() === SyntaxKind.ProtectedKeyword);
+    if (isStatic || isPrivate || isProtected) return;
+    const methodInfos = extractMethodSignature(getAccessorDeclaration, sourceFile, fileMap, outputPath);
+    methodInfos.forEach(methodInfo => {
+      if (!methods.has(getAccessorDeclaration.getName())) {
+        methods.set(getAccessorDeclaration.getName(), []);
+      }
+      methods.get(getAccessorDeclaration.getName())!.push(methodInfo);
+    });
+  })
+  declaration.getSetAccessors().forEach(setAccessorDeclaration => {
+    const isStatic = setAccessorDeclaration.getModifiers().some(modifier => modifier.getKind() === SyntaxKind.StaticKeyword);
+    const isPrivate = setAccessorDeclaration.getModifiers().some(modifier => modifier.getKind() === SyntaxKind.PrivateKeyword);
+    const isProtected = setAccessorDeclaration.getModifiers().some(modifier => modifier.getKind() === SyntaxKind.ProtectedKeyword);
+    if (isStatic || isPrivate || isProtected) return;
+    const methodInfos = extractMethodSignature(setAccessorDeclaration, sourceFile, fileMap, outputPath);
+    methodInfos.forEach(methodInfo => {
+      if (!methods.has(setAccessorDeclaration.getName())) {
+        methods.set(setAccessorDeclaration.getName(), []);
+      }
+      methods.get(setAccessorDeclaration.getName())!.push(methodInfo);
+    });
+  });
+}
+function extractInterfaceMethods(declaration: InterfaceDeclaration, sourceFile: SourceFile, fileMap: Map<string, string>, outputPath: string, methods: Map<string, MethodSignatureInfo[]>): void {
+  declaration.getMethods().forEach(methodDeclaration => {
+    const methodInfos = extractMethodSignature(methodDeclaration, sourceFile, fileMap, outputPath);
+    methodInfos.forEach(methodInfo => {
+      if (!methods.has(methodInfo.name)) {
+        methods.set(methodInfo.name, []);
+      }
+      methods.get(methodInfo.name)!.push(methodInfo);
+    });
+  });
+  declaration.getCallSignatures().forEach(callSignature => {
+    const methodInfos = extractMethodSignature(callSignature as any, sourceFile, fileMap, outputPath);
+    methodInfos.forEach(methodInfo => {
+      if (!methods.has('call')) {
+        methods.set('call', []);
+      }
+      methods.get('call')!.push(methodInfo);
+    });
+  });
+}
+
+function extractDeclarationMethods(declaration: ClassDeclaration | InterfaceDeclaration | TypeAliasDeclaration, sourceFile: SourceFile, fileMap: Map<string, string>, outputPath: string, methods: Map<string, MethodSignatureInfo[]>): void {
+  if (Node.isClassDeclaration(declaration)) {
+    extractClassMethods(declaration, sourceFile, fileMap, outputPath, methods);
+    extractProperties(declaration, sourceFile, fileMap, outputPath, methods);
+    extractHeritageClauses(declaration, sourceFile, fileMap, outputPath, methods)
+  }
+  if (Node.isInterfaceDeclaration(declaration)) {
+    extractInterfaceMethods(declaration, sourceFile, fileMap, outputPath, methods)
+    extractProperties(declaration, sourceFile, fileMap, outputPath, methods);
+    extractIndexSignatures(declaration, sourceFile, fileMap, outputPath, methods)
+    extractHeritageClauses(declaration, sourceFile, fileMap, outputPath, methods)
+  }
+  if (Node.isTypeAliasDeclaration(declaration)) {
+    const typeNode = declaration.getTypeNode()
+    if (Node.isTypeLiteral(typeNode)) {
+      typeNode.getMethods().forEach(methodDeclaration => {
+        const methodInfos = extractMethodSignature(methodDeclaration, sourceFile, fileMap, outputPath);
+        methodInfos.forEach(methodInfo => {
+          if (!methods.has(methodInfo.name)) {
+            methods.set(methodInfo.name, []);
           }
-          return "";
-        }).join(', ');
-        return `{${props}}`;
-      }
-    }
-  }
-  if (type.isTypeParameter()) {
-    const symbol = type.getSymbol();
-    if (symbol) return symbol.getName();
-    return type.getText();
-  }
-  if (type.isUnion()) {
-    return type.getUnionTypes().map(t => resolveType(t, node, logLevel, typeChecker, imports, project, outputPath, scanPath, fileMap)).join(" | ");
-  }
-  if (type.isIntersection()) {
-    return type.getIntersectionTypes().map(t => resolveType(t, node, logLevel, typeChecker, imports, project, outputPath, scanPath, fileMap)).join(" & ");
-  }
-  if (type.isEnum()) {
-    const symbol = type.getSymbol();
-    if (symbol) return symbol.getName();
-  }
-  if (type.isClassOrInterface()) {
-    const symbol = type.getSymbol();
-    if (symbol) return symbol.getName();
-  }
-  if (type.getFlags() & TypeFlags.Object) {
-    const symbol = type.getSymbol();
-    if (symbol && symbol.getName() === "Promise") {
-      const typeArgs = type.getTypeArguments();
-      if (typeArgs.length > 0) {
-        return `Promise<${typeArgs.map(t => {
-          const argType = t;
-          if (argType.getSymbol()) {
-            collectImports(argType.getSymbol()!.getDeclarations()[0], imports!, project!, outputPath!, scanPath!, fileMap!);
+          methods.get(methodInfo.name)!.push(methodInfo);
+        });
+      });
+      typeNode.getCallSignatures().forEach(callSignature => {
+        const methodInfos = extractMethodSignature(callSignature as any, sourceFile, fileMap, outputPath);
+        methodInfos.forEach(methodInfo => {
+          if (!methods.has('call')) {
+            methods.set('call', []);
           }
-          return resolveType(argType, node, logLevel, typeChecker, imports, project, outputPath, scanPath, fileMap);
-        }).join(", ")}>`;
-      }
-      return `Promise<any>`;
+          methods.get('call')!.push(methodInfo);
+        });
+      });
+      extractProperties(typeNode, sourceFile, fileMap, outputPath, methods);
+      extractIndexSignatures(typeNode, sourceFile, fileMap, outputPath, methods)
     }
   }
-  if (type.getFlags() & TypeFlags.Conditional) {
-    return type.getText(node, TypeFormatFlags.NoTruncation);
-  }
-  if (type.getFlags() & TypeFlags.IndexedAccess) {
-    return type.getText(node, TypeFormatFlags.NoTruncation);
-  }
-  if (logLevel === 'debug') console.log(chalk.yellow(`[DEBUG] Default resolving type: ${type.getText(node, TypeFormatFlags.NoTruncation)}`));
-  return type.getText(node, TypeFormatFlags.NoTruncation);
-}
-function extractTypeParameter(typeParameter: TypeParameterDeclaration, node: Node, logLevel?: 'silent' | 'info' | 'debug', typeChecker?: TypeChecker): TypeParameter {
-  return {
-    name: typeParameter.getName(),
-    constraint: typeParameter.getConstraint() ? resolveType(typeChecker!.getTypeAtLocation(typeParameter.getConstraint()!), node, logLevel, typeChecker) : undefined
-  };
-}
-function extractMethodParameter(parameter: ParameterDeclaration, logLevel?: 'silent' | 'info' | 'debug', typeChecker?: TypeChecker): MethodParameter {
-  const paramType = parameter.getType();
-  return {
-    name: parameter.getName(),
-    type: resolveType(paramType, parameter, logLevel, typeChecker),
-    optional: parameter.isOptional()
-  };
-}
-function extractMethodSignature(method: MethodDeclaration, logLevel?: 'silent' | 'info' | 'debug', typeChecker?: TypeChecker, imports?: Set<string>, project?: Project, outputPath?: string, scanPath?: string, fileMap?: Map<string, string>): MethodSignature {
-  return {
-    name: method.getName(),
-    typeParameters: method.getTypeParameters().map(param => extractTypeParameter(param, method, logLevel, typeChecker)),
-    parameters: method.getParameters().map(parameter => extractMethodParameter(parameter, logLevel, typeChecker)),
-    returnType: resolveType(method.getReturnType(), method, logLevel, typeChecker, imports, project, outputPath, scanPath, fileMap)
-  };
+
 }
 export async function extractTypeInformation(
   scanPath: string,
@@ -157,47 +429,52 @@ export async function extractTypeInformation(
   fileMap: Map<string, string>,
   logLevel?: 'silent' | 'info' | 'debug'
 ): Promise<TypeInformation> {
-  if (logLevel === 'info' || logLevel === 'debug') console.log(chalk.cyan(`[NATS] Extracting type information...`));
   const project = new Project();
   project.addSourceFilesAtPaths(tsFiles);
-  const typeChecker = project.getTypeChecker();
   const typeInfo: TypeInformation = {
     imports: new Set<string>(),
     methodSignatures: new Map(),
-    localInterfaces: new Set<string>(),
+    localInterfaces: new Set()
   };
   for (const sourceFile of project.getSourceFiles()) {
-    sourceFile.getClasses().forEach(classDeclaration => {
+    for (const classDeclaration of sourceFile.getClasses()) {
       const className = classDeclaration.getName();
-      if (!className) return;
-      const methodSignatures = new Map<string, MethodSignature[]>();
-      classDeclaration.getMethods().forEach(methodDeclaration => {
-        const methodName = methodDeclaration.getName();
-        if (logLevel === 'debug') console.log(chalk.magenta(`[DEBUG] Processing method: ${methodName}`));
-        const signatures: MethodSignature[] = [];
-        const overloads = methodDeclaration.getOverloads();
-        if (overloads.length > 0) {
-          overloads.forEach(overload => {
-            const signature = extractMethodSignature(overload, logLevel, typeChecker, typeInfo.imports, project, outputPath, scanPath, fileMap);
-            signatures.push(signature)
-            overload.getParameters().forEach(parameter => {
-              collectImports(parameter.getType().getSymbol()?.getDeclarations()?.[0], typeInfo.imports, project, outputPath, scanPath, fileMap);
-            })
-            collectImports(overload.getReturnType().getSymbol()?.getDeclarations()?.[0], typeInfo.imports, project, outputPath, scanPath, fileMap);
-          })
-        } else {
-          const signature = extractMethodSignature(methodDeclaration, logLevel, typeChecker, typeInfo.imports, project, outputPath, scanPath, fileMap)
-          signatures.push(signature)
-          methodDeclaration.getParameters().forEach(parameter => {
-            collectImports(parameter.getType().getSymbol()?.getDeclarations()?.[0], typeInfo.imports, project, outputPath, scanPath, fileMap);
-          });
-          collectImports(methodDeclaration.getReturnType().getSymbol()?.getDeclarations()?.[0], typeInfo.imports, project, outputPath, scanPath, fileMap);
-        }
-        methodSignatures.set(methodName, signatures)
-      });
-      typeInfo.methodSignatures.set(className, methodSignatures)
-    });
+      if (!className) continue;
+      const methodSignatures = new Map<string, MethodSignatureInfo[]>();
+      extractDeclarationMethods(classDeclaration, sourceFile, fileMap, outputPath, methodSignatures);
+      typeInfo.methodSignatures.set(className, methodSignatures);
+      if (logLevel === 'debug') {
+        console.log(chalk.gray(`[DEBUG] Extracted class: ${className}`), methodSignatures);
+      }
+    }
+    for (const interfaceDeclaration of sourceFile.getInterfaces()) {
+      const interfaceName = interfaceDeclaration.getName();
+      const methodSignatures = new Map<string, MethodSignatureInfo[]>();
+      extractDeclarationMethods(interfaceDeclaration, sourceFile, fileMap, outputPath, methodSignatures);
+      typeInfo.methodSignatures.set(interfaceName, methodSignatures);
+      if (logLevel === 'debug') {
+        console.log(chalk.gray(`[DEBUG] Extracted interface: ${interfaceName}`), methodSignatures);
+      }
+    }
+    for (const typeAliasDeclaration of sourceFile.getTypeAliases()) {
+      const typeAliasName = typeAliasDeclaration.getName();
+      const methodSignatures = new Map<string, MethodSignatureInfo[]>();
+      extractDeclarationMethods(typeAliasDeclaration, sourceFile, fileMap, outputPath, methodSignatures);
+      typeInfo.methodSignatures.set(typeAliasName, methodSignatures);
+      if (logLevel === 'debug') {
+        console.log(chalk.gray(`[DEBUG] Extracted type: ${typeAliasName}`), methodSignatures);
+      }
+      typeInfo.localInterfaces.add(typeAliasName)
+    }
   }
-  if (logLevel === 'info' || logLevel === 'debug') console.log(chalk.cyan(`[NATS] Finished extracting type information`));
+  project.getSourceFiles().forEach(sourceFile => {
+    sourceFile.getImportDeclarations().forEach(importDeclaration => {
+      const importStatement = importDeclaration.getText();
+      typeInfo.imports.add(importStatement);
+    });
+  });
+  if (logLevel === 'debug') {
+    console.log(chalk.gray(`[DEBUG] Extracted types:`), typeInfo);
+  }
   return typeInfo;
 }
